@@ -1,0 +1,6 @@
+{
+  "dt_ms": 10.0,
+  "clip_seconds": 20.0,
+  "jitter_ms": 0.0,
+  "maps": "maps/demo"
+}
