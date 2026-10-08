@@ -47,10 +47,10 @@ def main() -> None:
     cfg = {"dt_ms": 10.0, "jitter_ms": 0.0}
     model = None
     if args.run:
-        from stable_baselines3 import PPO
+        from maniabot.sb3_compat import load_ppo
 
         cfg.update(json.loads((Path(args.run) / "config.json").read_text()))
-        model = PPO.load(Path(args.run) / "model", device="cpu")
+        model = load_ppo(Path(args.run) / "model", device="cpu")
     if args.jitter_ms is not None:
         cfg["jitter_ms"] = args.jitter_ms
     if args.dt_ms is not None:

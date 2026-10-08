@@ -18,9 +18,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from stable_baselines3 import PPO
-
 from mania_env import ManiaEnv
+from maniabot.sb3_compat import load_ppo
 from osr_writer import build_osr
 from osu_parser import load_maps
 
@@ -61,7 +60,7 @@ def main() -> None:
     cfg = {"dt_ms": 10.0, "jitter_ms": 0.0}
     cfg.update(json.loads((run / "config.json").read_text()))
     jitter = cfg["jitter_ms"] if args.jitter_ms is None else args.jitter_ms
-    model = PPO.load(run / "model", device="cpu")
+    model = load_ppo(run / "model", device="cpu")
 
     maps = load_maps(args.maps)
     if args.match:

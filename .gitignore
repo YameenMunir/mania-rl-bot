@@ -1,0 +1,47 @@
+# --- Python / tooling -------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Runtime / user data ----------------------------------------------------
+# The app stores models, versions, checkpoints, replays, logs and settings in a
+# per-user data folder OUTSIDE this repository (%LOCALAPPDATA%\OsuManiaAI on
+# Windows, see maniabot/storage.py). These rules are a second line of defence
+# for the legacy CLI scripts and for anything written here by mistake.
+/runs/
+/replays/
+/models/
+/checkpoints/
+/logs/
+/cache/
+/datasets/
+/training_data/
+/user_data/
+/runtime/
+/local_data/
+/tensorboard/
+
+# Model weights and training state, wherever they end up
+model.zip
+ppo_*_steps.zip
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.safetensors
+*.h5
+*.keras
+*.pkl
+*.joblib
+events.out.tfevents.*
+
+# Generated replays, logs and temp files
+*.osr
+*.log
+*.tmp
+episodes.csv
+learning_curve.png

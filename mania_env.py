@@ -11,6 +11,10 @@ Observation (per lane, flattened):
 With record=True the env logs every key press/release as (time_ms, lane, down) in
 `env.events`, using the same (possibly jittered) timestamps the judging used. That
 log is what export_replay.py turns into an osu! .osr replay.
+
+For evaluation the env also keeps `hit_log` ((lane, delta_ms, judgement_index) for every
+judged press, negative delta = early), `lane_counts` (per-lane judgement counts),
+`lane_strays` (presses that hit no note) and `holds_total` (hold notes in the clip).
 """
 from __future__ import annotations
 
@@ -98,6 +102,7 @@ class ManiaEnv(gym.Env):
             self.ends.append(np.array([n.end_time for n in ln], dtype=np.float64))
             self.is_hold.append(np.array([n.is_hold for n in ln], dtype=bool))
         self.total = len(sel)
+        self.holds_total = sum(1 for n in sel if n.is_hold)
 
         self.t = float(start)
         self.ptr = [0] * self.KEYS
@@ -111,6 +116,9 @@ class ManiaEnv(gym.Env):
         self.combo = 0
         self.max_combo = 0
         self.events = []
+        self.hit_log: list[tuple[int, float, int]] = []
+        self.lane_counts = np.zeros((self.KEYS, 6), dtype=np.int64)
+        self.lane_strays = [0] * self.KEYS
         self.steps = 0
         self.max_steps = int((end - start) / self.dt) + int(3000 / self.dt)
         return self._obs(), {}
@@ -126,11 +134,13 @@ class ManiaEnv(gym.Env):
         times = self.times[lane]
         if ptr >= len(times):
             self.strays += 1
+            self.lane_strays[lane] += 1
             return -self.stray_penalty
         delta = now - times[ptr]
         w = self.windows
         if delta < -w[5]:  # too early to count for this note
             self.strays += 1
+            self.lane_strays[lane] += 1
             return -self.stray_penalty
         ad = abs(delta)
         if ad <= w[4]:
@@ -138,6 +148,8 @@ class ManiaEnv(gym.Env):
         else:
             j = 5  # inside the miss window: counts as a miss and eats the note
         self.counts[j] += 1
+        self.lane_counts[lane, j] += 1
+        self.hit_log.append((lane, float(delta), j))
         self.ptr[lane] += 1
         if j == 5:
             self.combo = 0
@@ -167,6 +179,7 @@ class ManiaEnv(gym.Env):
             ptr = self.ptr[lane]
             while ptr < len(times) and self.t > times[ptr] + w5:
                 self.counts[5] += 1
+                self.lane_counts[lane, 5] += 1
                 self.combo = 0
                 r -= 1.0
                 ptr += 1

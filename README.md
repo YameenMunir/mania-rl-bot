@@ -4,22 +4,102 @@ A small project that trains a neural network (PPO) to play osu!mania 4K and get 
 It runs against a fast simulator of osu!mania scoring instead of the real game, so thousands of plays
 take minutes.
 
+## The app
+
+`python app.py` opens a desktop app (Tkinter, no extra dependencies) that covers the whole workflow:
+
+| Section | What you can do |
+|---|---|
+| **Dashboard** | Totals, last trained / best model, training status, device and osu! status, quick actions |
+| **Models → Create New Model** | Name, maps folder (4K maps are validated, everything else is listed and skipped), training length, learning rate, batch size, checkpoints, device, seed, advanced PPO settings, then a summary before training starts |
+| **Models → Existing Models** | Model Library: rename, archive, delete, open a model |
+| **Models → Version History** | Lineage tree of every version: test, generate a replay, continue training from it, set active, mark best, protect, favourite, archive, evaluate, compare, delete |
+| **Models → Continue Training** | Resume from the active, best or latest version, any older version, or a checkpoint. Weights, optimiser state, step counter and learning-rate schedule are restored. Warns when a changed setting could hurt |
+| **Training** | Live progress, losses, recent accuracy, checkpoints, ETA; pause, save checkpoint now, stop & save, cancel |
+| **Test Model** | Pick model, version and a 4K map, then **Watch Bot Play** (the model plays live in a 4K playfield, then save the play and open it in osu!) or **Generate Replay** (no watching; writes an `.osr`) |
+| **Replays** | Replay history with metrics; open in osu!, show in folder, copy path, generate again, delete. Entries survive deleting the model |
+| **Settings** | Storage location (change it with a safe copy), storage usage, osu! stable folder, defaults, import old CLI runs, logs |
+
+### Versions are never overwritten
+
+Every training session creates a **new** version (`v001`, `v002`, ...) that records its parent, so
+continuing from `v003` when `v005` exists creates `v006` with `parent_version: v003` and keeps
+everything else. Saving is atomic: weights go to a temp folder, are verified, get their metadata,
+and only then are renamed into place. Version numbers are never reused.
+
+- **Active**: the version used by default for testing (you choose it; *Set as Active*).
+- **Latest**: the most recently created version.
+- **Best**: highest validation accuracy on held-out maps, unless you mark one by hand.
+- **Protected** versions are kept by any cleanup and need an extra confirmation to delete.
+
+Deleting asks for confirmation (whole models also require typing the name). A version that is
+being trained from or tested is locked until that finishes.
+
+### Where your data lives (not in Git)
+
+Models, versions, checkpoints, training logs, evaluation results, replays and settings are stored
+in your user data folder, **outside this repository**:
+
+- Windows: `%LOCALAPPDATA%\OsuManiaAI`
+- macOS: `~/Library/Application Support/OsuManiaAI`
+- Linux: `~/.local/share/OsuManiaAI`
+
+Set `OSUMANIAAI_HOME` to use another folder (the tests do this). `.gitignore` also ignores model
+files, checkpoints, replays, logs and the old `runs/` and `replays/` folders as a second line of
+defence. Models trained earlier with `train.py` can be copied into the library from the Dashboard
+banner or *Settings → Import* (the originals are left untouched).
+
+### osu! stable
+
+The app finds osu! stable through `%LOCALAPPDATA%\osu!` or the `osu://` file association (or set
+the folder in Settings). It hands osu! the `.osr` (to watch the replay) or an `.osz` (to import the
+map first). There is no memory reading or input injection: "Watch Bot Play" runs the model live in
+the app's own playfield, using the same simulator as training. Without osu! installed, everything
+else still works.
+
+Accuracy and judgement counts in the app come from the simulator, not from osu!. osu! re-judges a
+replay with its own rules.
+
 ## Files
 
 | File | What it does |
 |---|---|
+| `app.py` | Starts the desktop app |
+| `maniabot/storage.py` | User data folder, settings, atomic writes, storage migration |
+| `maniabot/models.py` | Model library: versions, lineage, flags, checkpoints, sessions, safe deletion |
+| `maniabot/training.py` | Training sessions (new / continue), checkpoints, background worker process |
+| `maniabot/evaluation.py` | Inference and evaluation metrics (timing, lanes, holds, misses, extra presses) |
+| `maniabot/replays.py` | Replay generation and history |
+| `maniabot/beatmaps.py` | osu!mania 4K validation with reasons for rejected maps |
+| `maniabot/osu_integration.py` | Finds osu! stable, opens replays and mapsets |
+| `maniabot/legacy.py` | Imports models trained with the old `train.py` |
+| `maniabot/ui/` | The Tkinter interface |
 | `osu_parser.py` | Parses `.osu` files (note times, lanes, holds, OD) |
 | `mania_env.py` | Gymnasium env: 4 keys, real hit windows (MAX/300/200/100/50/miss), hold notes |
 | `make_demo_maps.py` | Makes synthetic 4K maps so you can train immediately |
-| `train.py` | PPO training, logs every play to `episodes.csv`, plots a learning curve |
-| `evaluate.py` | Scores a trained model (or a scripted oracle baseline) on full maps |
-| `export_replay.py` | Plays maps with a trained model and writes osu! stable `.osr` replay files |
+| `train.py` | Command-line PPO training (writes to `runs/`, which is git-ignored) |
+| `evaluate.py` | Command-line scoring of a model (or a scripted oracle baseline) on full maps |
+| `export_replay.py` | Command-line `.osr` export |
 | `osr_writer.py` | The `.osr` file writer (header, LZMA frames, beatmap MD5) |
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest              # includes a real training worker process (marked slow)
+python -m pytest -m "not slow"
+```
 
 ## Quick start
 
 ```bash
 pip install -r requirements.txt
+python app.py                                  # the desktop app
+```
+
+Or with the original command-line scripts:
+
+```bash
 python make_demo_maps.py                       # writes maps/demo/*.osu
 python evaluate.py --baseline --maps maps/demo # sanity check: oracle should score ~100%
 python train.py --maps maps/demo --timesteps 300000 --out runs/demo
@@ -47,10 +127,9 @@ library first.
 
 1. Drag every file in `maps/osz/` onto the osu! window (or double-click them) to import the 12 demo mapsets.
    Each has a click-track on the beat as its audio.
-2. `python export_replay.py --run runs/smoke2 --maps maps/demo --out replays`
-3. Double-click a `.osr` in `replays/` (or drag it onto osu!) to watch it.
-
-Two sample replays are already in `replays/` for Demo 005 and Demo 010.
+2. In the app: **Test Model → Generate Replay** on a `maps/demo` map, then **Open in osu!**
+   (or from the command line: `python export_replay.py --run runs/demo --maps maps/demo --out replays`).
+3. osu! plays the replay. You can also double-click an `.osr` file, or drag it onto osu!.
 
 **Real maps:**
 

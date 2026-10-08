@@ -113,7 +113,9 @@ def main() -> None:
     env = make_vec_env(make_env, n_envs=args.n_envs, seed=args.seed, vec_env_cls=vec_cls)
 
     if args.resume:
-        model = PPO.load(args.resume, env=env, device="cpu")
+        from maniabot.sb3_compat import load_ppo
+
+        model = load_ppo(args.resume, env=env, device="cpu")
     else:
         model = PPO(
             "MlpPolicy",

@@ -27,6 +27,8 @@ class Beatmap:
     path: str = ""
     artist: str = ""
     md5: str = ""  # MD5 of the raw .osu file bytes; osu! uses it to match replays to maps
+    audio_filename: str = ""  # [General] AudioFilename, relative to the .osu file
+    creator: str = ""
 
     @property
     def name(self) -> str:
@@ -89,6 +91,8 @@ def parse_osu(path: str | Path) -> Beatmap:
         path=str(path),
         artist=meta.get("Artist", ""),
         md5=md5,
+        audio_filename=sections["General"].get("AudioFilename", ""),
+        creator=meta.get("Creator", ""),
     )
 
 
