@@ -11,12 +11,12 @@ take minutes.
 | Section | What you can do |
 |---|---|
 | **Dashboard** | Totals, last trained / best model, training status, device and osu! status, quick actions |
-| **Models → Create New Model** | Name, maps folder (4K maps are validated, everything else is listed and skipped), training length, learning rate, batch size, checkpoints, device, seed, advanced PPO settings, then a summary before training starts |
+| **Models → Create New Model** | Name, maps (a folder, or a single `.osu` / `.osz` / `.zip` via **File…**; 4K maps are validated, everything else is listed and skipped), training length, learning rate, batch size, checkpoints, device, seed, advanced PPO settings, then a summary before training starts |
 | **Models → Existing Models** | Model Library: rename, archive, delete, open a model |
 | **Models → Version History** | Lineage tree of every version: test, generate a replay, continue training from it, set active, mark best, protect, favourite, archive, evaluate, compare, delete |
 | **Models → Continue Training** | Resume from the active, best or latest version, any older version, or a checkpoint. Weights, optimiser state, step counter and learning-rate schedule are restored. Warns when a changed setting could hurt |
 | **Training** | Live progress, losses, recent accuracy, checkpoints, ETA; pause, save checkpoint now, stop & save, cancel |
-| **Test Model** | Pick model, version and a 4K map, then **Watch Bot Play** (the model plays live in a 4K playfield, then save the play and open it in osu!) or **Generate Replay** (no watching; writes an `.osr`) |
+| **Test Model** | Pick model, version and a 4K map (a `.osu` file, or an `.osz` / `.zip` to choose one of its difficulties), then **Watch Bot Play** (the model plays live in a 4K playfield, then save the play and open it in osu!) or **Generate Replay** (no watching; writes an `.osr`) |
 | **Replays** | Replay history with metrics; open in osu!, show in folder, copy path, generate again, delete. Entries survive deleting the model |
 | **Settings** | Storage location (change it with a safe copy), storage usage, osu! stable folder, defaults, import old CLI runs, logs |
 
@@ -70,7 +70,7 @@ replay with its own rules.
 | `maniabot/training.py` | Training sessions (new / continue), checkpoints, background worker process |
 | `maniabot/evaluation.py` | Inference and evaluation metrics (timing, lanes, holds, misses, extra presses) |
 | `maniabot/replays.py` | Replay generation and history |
-| `maniabot/beatmaps.py` | osu!mania 4K validation with reasons for rejected maps |
+| `maniabot/beatmaps.py` | osu!mania 4K validation with reasons for rejected maps; unpacks `.osz` / `.zip` map archives into a cache |
 | `maniabot/osu_integration.py` | Finds osu! stable, opens replays and mapsets |
 | `maniabot/legacy.py` | Imports models trained with the old `train.py` |
 | `maniabot/ui/` | The Tkinter interface |
@@ -115,8 +115,28 @@ action per tick would never press a key.
 
 ## Using real maps
 
-Download 4K osu!mania beatmaps from osu.ppy.sh, unzip the `.osz` files (they are zip archives) into a
-folder like `maps/real/`, then pass `--maps maps/real`. Non-4K and non-mania files are skipped automatically.
+Download 4K osu!mania beatmaps from osu.ppy.sh (or use maps you already have) and point the app at them.
+No unzipping is needed. In **Create New Model** or **Continue Training**, use **Browse…** for a folder or
+**File…** for a single file. These all work:
+
+- loose `.osu` files,
+- `.osz` mapsets (an `.osz` is a zip),
+- `.zip` files, either one mapset or a map pack containing many `.osz` files (unpacked one level deep).
+
+Folders are searched recursively and may mix all of the above. The same applies to the command-line
+scripts (`--maps <folder or file>`).
+
+Archives are unpacked into a cache and your source files are never modified. Only `.osu` files and
+audio are extracted (backgrounds and videos are skipped). The cache lives in
+`<data folder>/cache/mapsets` (see *Where your data lives*) and is reused on later scans. If you
+re-download or edit an archive it is unpacked again, and you can delete the folder at any time.
+
+Only 4K maps with at least 50 notes are used. Everything else (5K to 14K, other game modes, corrupt
+files or archives) is skipped and listed under **Show rejected maps** with the reason; nothing is
+converted.
+
+In **Test Model**, picking an `.osz` or `.zip` unpacks it and shows a list of its usable 4K
+difficulties to choose from. A map pack with many mapsets lists every difficulty in it.
 
 ## Watching replays in osu! stable
 
@@ -134,7 +154,7 @@ library first.
 **Real maps:**
 
 1. Download the map in osu! so it sits in your Songs folder.
-2. Point `--maps` at your Songs folder, for example `C:\Users\you\AppData\Local\osu!\Songs`.
+2. Point `--maps` at your Songs folder (or at a folder of `.osz` / `.zip` downloads), for example `C:\Users\you\AppData\Local\osu!\Songs`.
    Use `--match "song name"` to pick one map, and `--tries 5` to keep the best of 5 plays.
 3. `python export_replay.py --run runs/mine --maps "<Songs folder>" --match "song name" --out replays`
 
