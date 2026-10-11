@@ -6,13 +6,13 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 
 from maniabot import osu_integration
-from maniabot.beatmaps import check_beatmap
+from maniabot.beatmaps import check_beatmap, extract_osz
 from maniabot.models import ModelError
 from maniabot.replays import generate_replay
 from maniabot.ui import theme
 from maniabot.ui.pages.base import Page, version_label
 from maniabot.ui.pages.watch import WatchWindow
-from maniabot.ui.widgets import Card, EmptyState, KeyValueGrid, error, fmt_ms, fmt_pct, message
+from maniabot.ui.widgets import Card, Dialog, EmptyState, Table, KeyValueGrid, error, fmt_ms, fmt_pct, message
 
 
 class TestModelPage(Page):
@@ -209,15 +209,57 @@ class TestModelPage(Page):
         initial = (self.ctx.osu or {}).get("songs_dir") if songs else (
             str(Path(self.map_var.get()).parent) if self.map_var.get() else self.ctx.settings["default_maps"])
         p = filedialog.askopenfilename(title="Choose an osu!mania 4K beatmap", initialdir=initial,
-                                       filetypes=[("osu! beatmap", "*.osu"), ("All files", "*.*")])
+                                       filetypes=[("osu! maps", "*.osu *.osz *.zip"), ("osu! beatmap", "*.osu"),
+                                                  ("osu! mapset / map pack", "*.osz *.zip"), ("All files", "*.*")])
+        if p and Path(p).suffix.lower() in (".osz", ".zip"):
+            p = self._pick_from_archive(p)
         if p:
             self.map_var.set(p)
+
+    def _pick_from_archive(self, archive: str) -> str | None:
+        """Unpack an .osz/.zip and let the user choose one of its usable 4K difficulties."""
+        try:
+            files = extract_osz(archive)
+        except Exception as exc:
+            error(self, f"Couldn't open this archive: {exc}", "Can't open archive")
+            return None
+        checks = [c for c in map(check_beatmap, files) if c.ok]
+        if not checks:
+            error(self, "No usable osu!mania 4K maps in this archive (4K only, at least 50 notes).", "No maps found")
+            return None
+        if len(checks) == 1:
+            return checks[0].path
+        d = Dialog(self, "Choose a difficulty", width=720)
+        ttk.Label(d.body, text=f"{len(checks)} usable 4K maps in {Path(archive).name}",
+                  style="CardH2.TLabel").grid(row=0, column=0, sticky="w")
+        t = Table(d.body, [("map", "Map", 480), ("notes", "Notes", 80)], height=12)
+        t.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        for i, c in enumerate(checks):
+            t.insert(str(i), [c.label, len(c.beatmap.notes)])
+        t.select("0")
+        chosen: list[str] = []
+        close = d.close
+
+        def on_close(value):
+            sel = t.selected()  # read before the dialog (and its table) is destroyed
+            if value == "ok" and sel is not None:
+                chosen.append(sel)
+            close(value)
+
+        d.close = on_close
+        d.buttons([("Cancel", None, "TButton"), ("Use this map", "ok", "Accent.TButton")])
+        d.show()
+        return checks[int(chosen[0])].path if chosen else None
 
     def _check_map(self) -> None:
         path = self.map_var.get().strip()
         self.check = None
         if not path:
-            self.map_status.configure(text="Choose a .osu file (one difficulty of a mapset).", style="CardMuted.TLabel")
+            self.map_status.configure(text="Choose a .osu file, or an .osz / .zip to pick a difficulty from.", style="CardMuted.TLabel")
+            return
+        if Path(path).suffix.lower() in (".osz", ".zip"):
+            self.map_status.configure(text="Use Browse… to pick a difficulty from this archive.",
+                                      style="CardMuted.TLabel")
             return
         c = check_beatmap(path)
         if not c.ok:

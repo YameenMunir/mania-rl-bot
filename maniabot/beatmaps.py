@@ -51,8 +51,8 @@ def check_beatmap(path: str | Path, min_notes: int = MIN_NOTES) -> MapCheck:
     path = Path(path)
     if not path.exists():
         return MapCheck(str(path), False, "File not found.")
-    if path.suffix.lower() == ".osz":
-        return MapCheck(str(path), False, "Couldn't open this .osz archive (corrupt or not a zip).")
+    if path.suffix.lower() in (".osz", ".zip"):
+        return MapCheck(str(path), False, f"Couldn't open this {path.suffix.lower()} archive (corrupt or not a zip).")
     if path.suffix.lower() != ".osu":
         return MapCheck(str(path), False, "Not a .osu beatmap file.")
     try:
@@ -99,27 +99,29 @@ def osz_cache_root() -> Path:
     return base_root() / "cache" / "mapsets"
 
 
-def extract_osz(osz: str | Path, cache_root: Path | None = None) -> list[Path]:
-    """Unpack the .osu files (and audio) of an .osz mapset into the cache; returns the .osu paths.
+def extract_osz(archive: str | Path, cache_root: Path | None = None, _depth: int = 0) -> list[Path]:
+    """Unpack the .osu files (and audio) of an .osz / .zip into the cache; returns the .osu paths.
 
+    Works for a single mapset and for a map pack (a zip of .osz files, unpacked one level deep).
     The source archive is never modified. Extraction is skipped when the archive (same path,
     size and mtime) was already unpacked. Raises zipfile.BadZipFile / OSError on a bad archive.
     """
-    osz = Path(osz)
-    st = osz.stat()
-    key = hashlib.md5(f"{osz.resolve()}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:10]
-    safe = re.sub(r"[^A-Za-z0-9 ._-]", "_", osz.stem)[:60].strip() or "mapset"
+    archive = Path(archive)
+    st = archive.stat()
+    key = hashlib.md5(f"{archive.resolve()}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:10]
+    safe = re.sub(r"[^A-Za-z0-9 ._-]", "_", archive.stem)[:60].strip() or "mapset"
     dest = (cache_root or osz_cache_root()) / f"{safe}-{key}"
     done = dest / ".extracted"
     if not done.exists():
         dest.mkdir(parents=True, exist_ok=True)
         root = dest.resolve()
-        with zipfile.ZipFile(osz) as z:
+        wanted = {".osu"} | _AUDIO_EXTS | ({".osz"} if _depth == 0 else set())
+        with zipfile.ZipFile(archive) as z:
             for info in z.infolist():
                 if info.is_dir():
                     continue
                 name = Path(info.filename.replace("\\", "/"))
-                if name.suffix.lower() not in {".osu"} | _AUDIO_EXTS:
+                if name.suffix.lower() not in wanted:
                     continue  # skip backgrounds / videos / storyboards
                 target = (dest / name).resolve()
                 if root != target and root not in target.parents:
@@ -128,22 +130,33 @@ def extract_osz(osz: str | Path, cache_root: Path | None = None) -> list[Path]:
                 with z.open(info) as src, open(target, "wb") as out:
                     shutil.copyfileobj(src, out)
         done.write_text("ok")
-    return sorted(dest.rglob("*.osu"))
+    found = sorted(dest.rglob("*.osu"))
+    if _depth == 0:
+        for inner in sorted(dest.rglob("*.osz")):
+            try:
+                found += extract_osz(inner, cache_root, _depth=1)
+            except (zipfile.BadZipFile, OSError) as exc:
+                log.warning("can't unpack %s inside %s: %s", inner.name, archive, exc)
+    return found
+
+
+_ARCHIVE_EXTS = (".osz", ".zip")
 
 
 def iter_osu_files(path: str | Path) -> Iterable[Path]:
-    """Yield .osu files under `path` (file or folder, recursive). .osz mapsets are unpacked
-    into the cache and their .osu files yielded; an unreadable .osz is yielded as-is so the
-    scan can report it."""
+    """Yield .osu files under `path` (file or folder, recursive). .osz / .zip archives are
+    unpacked into the cache and their .osu files yielded; an unreadable archive is yielded
+    as-is so the scan can report it."""
     path = Path(path)
     if path.is_file():
         files = [path]
     elif path.is_dir():
-        files = sorted(f for f in path.rglob("*") if f.suffix.lower() in (".osu", ".osz") and f.is_file())
+        files = sorted(f for f in path.rglob("*")
+                       if f.suffix.lower() in (".osu",) + _ARCHIVE_EXTS and f.is_file())
     else:
         return
     for f in files:
-        if f.suffix.lower() != ".osz":
+        if f.suffix.lower() not in _ARCHIVE_EXTS:
             yield f
             continue
         try:

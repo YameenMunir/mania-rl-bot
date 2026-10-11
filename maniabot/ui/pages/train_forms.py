@@ -137,7 +137,7 @@ class CreateModelPage(Page):
         form_row(b, 1, "Description", ttk.Entry(b, textvariable=self.desc, width=60), "Optional notes for yourself.")
         ttk.Label(b, text="Mode: osu!mania 4K (4 lanes)", style="CardMuted.TLabel").grid(row=2, column=1, sticky="w")
 
-        c2 = Card(self.body, "Training maps", "Any folder of .osu files or .osz mapsets (searched recursively). Non-4K maps are skipped "
+        c2 = Card(self.body, "Training maps", "Any folder of .osu files, .osz mapsets or .zip map packs (searched recursively). Non-4K maps are skipped "
                                                "and listed, never converted.")
         c2.grid(row=1, column=0, sticky="ew", pady=(14, 0))
         b = c2.body

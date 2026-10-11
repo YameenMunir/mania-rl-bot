@@ -95,9 +95,10 @@ class MapsFolderField(ttk.Frame):
         self.columnconfigure(0, weight=1)
         ttk.Entry(self, textvariable=self.var).grid(row=0, column=0, sticky="ew")
         ttk.Button(self, text="Browse…", command=self.browse).grid(row=0, column=1, padx=(6, 0))
-        ttk.Button(self, text="Check maps", command=self.scan).grid(row=0, column=2, padx=(6, 0))
+        ttk.Button(self, text="File…", command=self.browse_file).grid(row=0, column=2, padx=(6, 0))
+        ttk.Button(self, text="Check maps", command=self.scan).grid(row=0, column=3, padx=(6, 0))
         self.summary = ttk.Label(self, text="", style="CardMuted.TLabel", wraplength=560, justify="left")
-        self.summary.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        self.summary.grid(row=1, column=0, columnspan=4, sticky="w", pady=(4, 0))
         self.details_btn = ttk.Button(self, text="Show rejected maps", style="CardLink.TButton", command=self.details)
         self.result: ScanResult | None = None
         self._gen = 0
@@ -114,6 +115,15 @@ class MapsFolderField(ttk.Frame):
         if d:
             self.set(d)
 
+    def browse_file(self) -> None:
+        start = Path(self.get())
+        f = filedialog.askopenfilename(
+            title="Choose a beatmap (.osu), mapset (.osz) or map pack (.zip)",
+            initialdir=str(start if start.is_dir() else start.parent) if self.get() else None,
+            filetypes=[("osu! maps", "*.osu *.osz *.zip"), ("All files", "*.*")])
+        if f:
+            self.set(f)
+
     def scan(self) -> None:
         path = self.get()
         self._gen += 1
@@ -121,7 +131,7 @@ class MapsFolderField(ttk.Frame):
         self.result = None
         self.details_btn.grid_forget()
         if not path or not Path(path).exists():
-            self.summary.configure(text="Folder not found." if path else "", style="CardError.TLabel")
+            self.summary.configure(text="Folder or file not found." if path else "", style="CardError.TLabel")
             if self.on_scan:
                 self.on_scan(None)
             return

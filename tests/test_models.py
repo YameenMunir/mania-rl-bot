@@ -254,3 +254,18 @@ def test_scan_reads_osz_mapsets_without_touching_source(tmp_path):
     assert [f.suffix for f in files] == [".osu"]
     assert beatmaps.check_beatmap(files[0]).ok
     assert sorted(p.name for p in src.iterdir()) == before
+
+
+def test_scan_reads_zip_map_pack(tmp_path):
+    import zipfile
+    from pathlib import Path
+    from maniabot import beatmaps
+
+    demo = Path(__file__).resolve().parent.parent / "maps" / "osz"
+    pack = tmp_path / "pack.zip"
+    with zipfile.ZipFile(pack, "w") as z:
+        z.write(demo / "demo_000.osz", "sub/demo_000.osz")
+        z.write(demo / "demo_001.osz", "demo_001.osz")
+    files = beatmaps.extract_osz(pack, tmp_path / "cache")
+    assert len(files) == 2 and all(f.suffix == ".osu" for f in files)
+    assert beatmaps.extract_osz(pack, tmp_path / "cache") == files  # cached second time
