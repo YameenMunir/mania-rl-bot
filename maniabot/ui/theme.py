@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk
@@ -82,6 +83,23 @@ def ui_scale(root: tk.Misc) -> float:
 def px(n: float) -> int:
     """Scale a 96-DPI pixel size to the current display."""
     return int(round(n * SCALE))
+
+
+ASSETS = Path(__file__).resolve().parents[2] / "assets"
+
+
+def load_image(name: str) -> tk.PhotoImage | None:
+    """A PNG from the repo's assets folder, or None if it's missing (the logo is optional)."""
+    try:
+        return tk.PhotoImage(file=str(ASSETS / name))
+    except (tk.TclError, OSError):
+        return None
+
+
+def logo_image() -> tk.PhotoImage | None:
+    """The sidebar logo, in the pre-rendered size closest to a 40 px (96-DPI) badge."""
+    size = 40 if SCALE < 1.25 else 60 if SCALE < 1.75 else 80
+    return load_image(f"logo_{size}.png")
 
 
 def apply(root: tk.Tk) -> None:

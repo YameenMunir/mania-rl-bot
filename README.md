@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="mania RL Bot logo" width="200">
+</p>
+
 # osu!mania 4K RL bot
 
 A small project that trains a neural network (PPO) to play osu!mania 4K and get better with every play.
@@ -65,6 +69,7 @@ replay with its own rules.
 | File | What it does |
 |---|---|
 | `app.py` | Starts the desktop app |
+| `assets/` | The logo (README, window icon and sidebar) in the sizes the app uses |
 | `maniabot/storage.py` | User data folder, settings, atomic writes, storage migration |
 | `maniabot/models.py` | Model library: versions, lineage, flags, checkpoints, sessions, safe deletion |
 | `maniabot/training.py` | Training sessions (new / continue), checkpoints, background worker process |

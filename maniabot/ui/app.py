@@ -95,6 +95,9 @@ class App(tk.Tk):
         self.geometry(f"{min(int(1280 * k), sw - 40)}x{min(int(820 * k), sh - 80)}")
         self.minsize(int(1000 * k), int(640 * k))
         theme.apply(self)
+        self._window_icons = [i for i in (theme.load_image("logo.png"), theme.load_image("icon_32.png")) if i]
+        if self._window_icons:
+            self.iconphoto(True, *self._window_icons)
         self.ctx = AppContext(self)
         event(log, "app.started", storage=self.ctx.storage.root)
         self._startup_maintenance()
@@ -131,9 +134,15 @@ class App(tk.Tk):
 
     # ---------------------------------------------------------- sidebar
     def _build_sidebar(self) -> None:
-        ttk.Label(self.sidebar, text="ManiaBot", style="Brand.TLabel").pack(anchor="w", padx=18, pady=(20, 0))
-        ttk.Label(self.sidebar, text="osu!mania 4K AI trainer", style="SidebarMuted.TLabel").pack(anchor="w", padx=18,
-                                                                                                 pady=(0, 18))
+        head = ttk.Frame(self.sidebar, style="Sidebar.TFrame")
+        head.pack(fill="x", padx=18, pady=(20, 18))
+        self._logo = theme.logo_image()  # keep a reference or Tk drops the image
+        if self._logo:
+            ttk.Label(head, image=self._logo, style="SidebarMuted.TLabel").pack(side="left", padx=(0, 10))
+        names = ttk.Frame(head, style="Sidebar.TFrame")
+        names.pack(side="left", anchor="center")
+        ttk.Label(names, text="ManiaBot", style="Brand.TLabel").pack(anchor="w")
+        ttk.Label(names, text="osu!mania 4K AI trainer", style="SidebarMuted.TLabel").pack(anchor="w")
         for key, label, subs in NAV:
             b = ttk.Button(self.sidebar, text=label, style="Nav.TButton", command=lambda k=key: self.show(k))
             b.pack(fill="x")
