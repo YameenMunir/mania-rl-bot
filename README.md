@@ -13,6 +13,20 @@ take minutes.
 > their respective owners and are used here only to describe compatibility with the game and its file formats.
 > It does not modify the game, read its memory, or inject input; see [osu! stable](#osu-stable).
 
+## Requirements
+
+| | Minimum | Notes |
+|---|---|---|
+| **OS** | Windows 10 / 11 | Developed and tested on Windows 11. The Python code is cross-platform and has data-folder paths for macOS and Linux, but those are untested, and the osu! stable integration is Windows-only. |
+| **Python** | 3.10 or newer, with Tkinter | Tested on 3.13. Tkinter ships with the python.org Windows installer (on Linux install `python3-tk`). |
+| **CPU** | Any 64-bit CPU, 2 cores | Training runs on the CPU. Reference: 700k steps took about 7 minutes on 2 cores. More cores let it run more games in parallel, which is faster (the default is one fewer than your core count, up to 8). |
+| **GPU** | Not needed | The network is small (two 128-unit layers), so the CPU build of PyTorch is enough. |
+| **RAM** | 4 GB free (8 GB recommended) | Each parallel game is its own process of roughly 330 MB, plus about 450 MB for the app and 370 MB for the trainer. The default 8 parallel games used about 3.5 GB in testing. On a small machine, lower **Parallel games** under *Show advanced settings*; 1 game runs inside the trainer process and uses far less memory. |
+| **Disk** | About 1 GB free, plus your maps | Dependencies are about 0.6 GB (PyTorch is most of it). Models are small (about 20 MB for several models and their checkpoints). Unpacked `.osz` / `.zip` maps are cached as `.osu` plus audio: 276 mapsets took about 1.4 GB. You can delete the cache at any time. |
+| **osu!** | Optional | osu! stable is only needed to watch replays in the real game (see below). Everything else works without it. |
+
+The memory and disk figures were measured on one machine with the default settings, so treat them as a guide.
+
 ## The app
 
 `python app.py` opens a desktop app (Tkinter, no extra dependencies) that covers the whole workflow:
@@ -68,6 +82,26 @@ else still works.
 
 Accuracy and judgement counts in the app come from the simulator, not from osu!. osu! re-judges a
 replay with its own rules.
+
+### Watch your model play in the real game
+
+If you have **osu! stable** installed, you can watch your bot's plays in osu! itself, in the normal
+replay viewer, the same way you would watch anyone's replay.
+
+1. Install osu! stable and run it once. The app finds it automatically; if it doesn't, set the osu!
+   folder in **Settings**.
+2. Go to **Test Model**, choose a model and version, and pick a 4K map (a `.osu`, or an `.osz` / `.zip`
+   to choose a difficulty from).
+3. Click **Watch Bot Play**, then **Save & watch in osu!** once the play finishes. Or click
+   **Generate Replay** (no live view) and then open it in osu!. Saved plays are kept in **Replays**,
+   where you can open them in osu! again at any time.
+4. If the map isn't in your osu! library yet, the app first gives osu! an `.osz` of that map to import.
+   It is built from the map's own files, so the beatmap is byte-identical, which a replay requires.
+   Once osu! has imported it, open the replay again.
+
+osu! stable is the only version supported; osu!lazer has not been tested. The app never touches the
+running game: it only hands osu! a replay or mapset file, the same as double-clicking one. See
+*Watching replays in osu! stable* below for the details and troubleshooting.
 
 ## Files
 
