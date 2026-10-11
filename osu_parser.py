@@ -97,9 +97,10 @@ def parse_osu(path: str | Path) -> Beatmap:
 
 
 def load_maps(path: str | Path, keys: int = 4, min_notes: int = 50) -> list[Beatmap]:
-    """Load every usable .osu file under `path` (a file or a folder, searched recursively)."""
-    path = Path(path)
-    files = [path] if path.is_file() else sorted(path.rglob("*.osu"))
+    """Load every usable .osu file (or .osz mapset) under `path` (a file or a folder, searched recursively)."""
+    from maniabot.beatmaps import iter_osu_files  # also unpacks .osz mapsets
+
+    files = list(iter_osu_files(path))
     maps: list[Beatmap] = []
     for file in files:
         try:

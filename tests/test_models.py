@@ -231,3 +231,26 @@ def test_settings_persist(data_root):
     assert json.loads(settings_path().read_text())["player_name"] == "Tester"
     assert Settings.load()["player_name"] == "Tester"
     assert str(settings_path()).startswith(str(data_root))
+
+
+def test_scan_reads_osz_mapsets_without_touching_source(tmp_path):
+    import shutil
+    from pathlib import Path
+    from maniabot import beatmaps
+
+    src = tmp_path / "songs"
+    src.mkdir()
+    shutil.copy(Path(__file__).resolve().parent.parent / "maps" / "osz" / "demo_000.osz", src / "a.osz")
+    (src / "broken.osz").write_bytes(b"not a zip")
+    before = sorted(p.name for p in src.iterdir())
+
+    cache = tmp_path / "cache"
+    files = []
+    for f in sorted(src.glob("*.osz")):
+        try:
+            files += beatmaps.extract_osz(f, cache)
+        except Exception:
+            pass
+    assert [f.suffix for f in files] == [".osu"]
+    assert beatmaps.check_beatmap(files[0]).ok
+    assert sorted(p.name for p in src.iterdir()) == before

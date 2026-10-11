@@ -6,12 +6,17 @@ rejected rather than being squeezed into 4 lanes.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import random
+import re
+import shutil
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
+from maniabot.storage import base_root
 from osu_parser import Beatmap, NotManiaError, parse_osu
 
 KEYS = 4
@@ -46,6 +51,8 @@ def check_beatmap(path: str | Path, min_notes: int = MIN_NOTES) -> MapCheck:
     path = Path(path)
     if not path.exists():
         return MapCheck(str(path), False, "File not found.")
+    if path.suffix.lower() == ".osz":
+        return MapCheck(str(path), False, "Couldn't open this .osz archive (corrupt or not a zip).")
     if path.suffix.lower() != ".osu":
         return MapCheck(str(path), False, "Not a .osu beatmap file.")
     try:
@@ -85,13 +92,65 @@ class ScanResult:
         return [c.beatmap for c in self.valid if c.beatmap]
 
 
+_AUDIO_EXTS = {".mp3", ".ogg", ".wav"}
+
+
+def osz_cache_root() -> Path:
+    return base_root() / "cache" / "mapsets"
+
+
+def extract_osz(osz: str | Path, cache_root: Path | None = None) -> list[Path]:
+    """Unpack the .osu files (and audio) of an .osz mapset into the cache; returns the .osu paths.
+
+    The source archive is never modified. Extraction is skipped when the archive (same path,
+    size and mtime) was already unpacked. Raises zipfile.BadZipFile / OSError on a bad archive.
+    """
+    osz = Path(osz)
+    st = osz.stat()
+    key = hashlib.md5(f"{osz.resolve()}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:10]
+    safe = re.sub(r"[^A-Za-z0-9 ._-]", "_", osz.stem)[:60].strip() or "mapset"
+    dest = (cache_root or osz_cache_root()) / f"{safe}-{key}"
+    done = dest / ".extracted"
+    if not done.exists():
+        dest.mkdir(parents=True, exist_ok=True)
+        root = dest.resolve()
+        with zipfile.ZipFile(osz) as z:
+            for info in z.infolist():
+                if info.is_dir():
+                    continue
+                name = Path(info.filename.replace("\\", "/"))
+                if name.suffix.lower() not in {".osu"} | _AUDIO_EXTS:
+                    continue  # skip backgrounds / videos / storyboards
+                target = (dest / name).resolve()
+                if root != target and root not in target.parents:
+                    continue  # never write outside the cache folder (zip-slip)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(info) as src, open(target, "wb") as out:
+                    shutil.copyfileobj(src, out)
+        done.write_text("ok")
+    return sorted(dest.rglob("*.osu"))
+
+
 def iter_osu_files(path: str | Path) -> Iterable[Path]:
+    """Yield .osu files under `path` (file or folder, recursive). .osz mapsets are unpacked
+    into the cache and their .osu files yielded; an unreadable .osz is yielded as-is so the
+    scan can report it."""
     path = Path(path)
     if path.is_file():
-        yield path
+        files = [path]
+    elif path.is_dir():
+        files = sorted(f for f in path.rglob("*") if f.suffix.lower() in (".osu", ".osz") and f.is_file())
+    else:
         return
-    if path.is_dir():
-        yield from sorted(path.rglob("*.osu"))
+    for f in files:
+        if f.suffix.lower() != ".osz":
+            yield f
+            continue
+        try:
+            yield from extract_osz(f)
+        except (zipfile.BadZipFile, OSError) as exc:
+            log.warning("can't unpack %s: %s", f, exc)
+            yield f
 
 
 def scan_maps(
