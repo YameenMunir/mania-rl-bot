@@ -8,6 +8,11 @@ A small project that trains a neural network (PPO) to play osu!mania 4K and get 
 It runs against a fast simulator of osu!mania scoring instead of the real game, so thousands of plays
 take minutes.
 
+> **Disclaimer:** This is an independent fan project. It is **not affiliated with, associated with, endorsed by, or
+> connected to osu!, ppy Pty Ltd, or the osu! team** in any way. "osu!" and "osu!mania" are trademarks of
+> their respective owners and are used here only to describe compatibility with the game and its file formats.
+> It does not modify the game, read its memory, or inject input; see [osu! stable](#osu-stable).
+
 ## The app
 
 `python app.py` opens a desktop app (Tkinter, no extra dependencies) that covers the whole workflow:
