@@ -128,6 +128,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "default_device": "auto",
     "legacy_import_dismissed": False,
     "recent_maps": [],
+    "test_maps_folder": "",  # last folder browsed on the Test Model page
+    "test_star_range": [None, None],
 }
 
 

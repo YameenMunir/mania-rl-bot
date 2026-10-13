@@ -5,17 +5,22 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
-from maniabot.beatmaps import ScanResult, default_val_count
+from maniabot.beatmaps import ScanResult, default_val_count, star_range_label
 from maniabot.models import ModelError, slugify
 from maniabot.storage import dir_size, human_size
 from maniabot.training import (
     DEFAULT_NET_ARCH, TrainingSpec, compatibility_warnings, default_n_envs, validate_spec,
 )
 from maniabot.ui.pages.base import (
-    DEVICE_CHOICES, DEVICE_HELP, LENGTH_HELP, LENGTH_PRESETS, MapsFolderField, Page, form_row, int_var, parse_float,
-    parse_int, summary_dialog, version_label,
+    DEVICE_CHOICES, DEVICE_HELP, LENGTH_HELP, LENGTH_PRESETS, MapsFolderField, Page, StarRangeField, form_row, int_var,
+    parse_float, parse_int, summary_dialog, version_label,
 )
 from maniabot.ui.widgets import Card, EmptyState, KeyValueGrid, Table, error, fmt_date, fmt_int, fmt_pct
+
+
+STAR_HELP = ("Only use maps whose osu! star rating is in this range (leave blank for no limit). It applies to "
+             "validation maps too, so scores stay comparable between sessions. Handy for training on easy maps "
+             "first, then widening the range.")
 
 
 class LengthField(ttk.Frame):
@@ -144,13 +149,15 @@ class CreateModelPage(Page):
         b.columnconfigure(1, weight=1)
         self.maps = MapsFolderField(b, self.ctx, s["default_maps"], on_scan=self._scanned)
         form_row(b, 0, "Beatmap folder", self.maps)
+        self.stars = StarRangeField(b, on_change=self._update_split)
+        form_row(b, 1, "Star range", self.stars, STAR_HELP)
         self.val = tk.StringVar(value="Auto")
         self.val_cb = ttk.Combobox(b, textvariable=self.val, values=["Auto"], state="readonly", width=10)
-        form_row(b, 1, "Validation maps", self.val_cb,
+        form_row(b, 2, "Validation maps", self.val_cb,
                  "Maps held out of training and used only to measure the model (and pick the Best version). "
                  "With very few maps, validation uses training maps instead.")
         self.split_lbl = ttk.Label(b, text="", style="CardMuted.TLabel")
-        self.split_lbl.grid(row=2, column=1, sticky="w")
+        self.split_lbl.grid(row=3, column=1, sticky="w")
         self.val_cb.bind("<<ComboboxSelected>>", lambda _e: self._update_split())
 
         c3 = Card(self.body, "Training")
@@ -189,19 +196,25 @@ class CreateModelPage(Page):
 
     def _scanned(self, res: ScanResult | None) -> None:
         self.scan = res
-        n = len(res.valid) if res else 0
-        self.val_cb.configure(values=["Auto"] + [str(i) for i in range(0, max(0, n - 1) + 1)])
+        self.stars.show_scan(res)
         self._update_split()
 
+    def _n_maps(self) -> int:
+        return len(self.stars.in_range())
+
     def _n_val(self) -> int:
-        n = len(self.scan.valid) if self.scan else 0
+        n = self._n_maps()
         return default_val_count(n) if self.val.get() == "Auto" else int(self.val.get())
 
     def _update_split(self) -> None:
-        if not self.scan or not self.scan.valid:
+        n = self._n_maps()
+        values = ["Auto"] + [str(i) for i in range(0, max(0, n - 1) + 1)]
+        self.val_cb.configure(values=values)
+        if self.val.get() not in values:
+            self.val.set("Auto")
+        if not self.scan or not n:
             self.split_lbl.configure(text="")
             return
-        n = len(self.scan.valid)
         v = self._n_val()
         if v == 0 or v >= n:
             self.split_lbl.configure(text=f"{n} training maps; validation will use training maps (none held out)")
@@ -219,6 +232,9 @@ class CreateModelPage(Page):
                 raise ModelError(f"A model called '{name}' already exists. Pick another name, or use Continue Training.")
             if not self.scan or not self.scan.valid:
                 raise ModelError("Choose a beatmap folder with at least one osu!mania 4K map (and click Check maps).")
+            self.stars.get()  # raises a readable error for a bad range
+            if not self._n_maps():
+                raise ModelError("No maps fall inside that star range. Widen the range or clear it.")
             spec = TrainingSpec(
                 model_id="(new)", kind="new", maps_folder=self.maps.get(), timesteps=self.length.get(),
                 learning_rate=parse_float(self.lr, "Learning rate"), batch_size=parse_int(self.batch, "Batch size"),
@@ -227,19 +243,21 @@ class CreateModelPage(Page):
                 notes="Initial training",
             )
             self.adv.apply(spec)
+            self.stars.apply(spec)
             errs = validate_spec(spec)
             if errs:
                 raise ModelError("\n".join(errs))
         except ModelError as exc:
             error(self, str(exc), "Check the settings")
             return
-        n = len(self.scan.valid)
+        n = self._n_maps()
         v = self._n_val()
         heldout = 0 < v < n
         rows = [
             ("Model", name),
             ("Mode", "osu!mania 4K"),
             ("Training maps", f"{n - v if heldout else n} from {spec.maps_folder}"),
+            ("Star range", star_range_label(spec.min_stars, spec.max_stars)),
             ("Validation maps", f"{v} held out" if heldout else f"{min(4, n)} training maps (not enough maps to hold any out)"),
             ("Device", _device_summary(self.ctx, spec.device)),
             ("Training length", f"{spec.timesteps:,} timesteps"),
@@ -326,25 +344,29 @@ class ContinueTrainingPage(Page):
         self.lr = tk.StringVar(value="0.0003")
         form_row(b, 1, "Learning rate", ttk.Entry(b, textvariable=self.lr, width=12),
                  "Lowering it (e.g. halving) often helps when fine-tuning an already good model.")
-        self.maps = MapsFolderField(b, self.ctx, self.ctx.settings["default_maps"])
+        self.maps = MapsFolderField(b, self.ctx, self.ctx.settings["default_maps"],
+                                    on_scan=lambda res: self.stars.show_scan(res))
         form_row(b, 2, "Beatmap folder", self.maps)
+        self.stars = StarRangeField(b)
+        form_row(b, 3, "Star range", self.stars, STAR_HELP)
         self.batch = int_var(1024)
-        form_row(b, 3, "Batch size", ttk.Entry(b, textvariable=self.batch, width=12))
+        form_row(b, 4, "Batch size", ttk.Entry(b, textvariable=self.batch, width=12))
         self.ckpt_every = int_var(100_000)
-        form_row(b, 4, "Checkpoint every", ttk.Entry(b, textvariable=self.ckpt_every, width=12))
+        form_row(b, 5, "Checkpoint every", ttk.Entry(b, textvariable=self.ckpt_every, width=12))
         self.device = tk.StringVar(value=self.ctx.settings["default_device"])
-        form_row(b, 5, "Device", ttk.Combobox(b, textvariable=self.device, values=DEVICE_CHOICES, state="readonly",
+        form_row(b, 6, "Device", ttk.Combobox(b, textvariable=self.device, values=DEVICE_CHOICES, state="readonly",
                                               width=10), DEVICE_HELP)
         self.notes = tk.StringVar()
-        form_row(b, 6, "Notes for the new version", ttk.Entry(b, textvariable=self.notes, width=60))
+        form_row(b, 7, "Notes for the new version", ttk.Entry(b, textvariable=self.notes, width=60))
         self.set_active = tk.BooleanVar(value=True)
         ttk.Checkbutton(b, text="Make the new version the active version when training finishes",
-                        variable=self.set_active, style="Card.TCheckbutton").grid(row=7, column=1, sticky="w", pady=4)
+                        variable=self.set_active, style="Card.TCheckbutton").grid(row=8, column=1, sticky="w", pady=4)
         self.adv = AdvancedSection(b, new_model=False)
-        self.adv.grid(row=8, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        self.adv.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(8, 0))
         self.warn_lbl = ttk.Label(b, text="", style="CardWarn.TLabel", wraplength=760, justify="left")
-        self.warn_lbl.grid(row=9, column=0, columnspan=4, sticky="w", pady=(10, 0))
-        for v in (self.lr, self.batch, self.adv.dt, self.adv.jitter, self.adv.n_envs, self.adv.n_steps, self.maps.var):
+        self.warn_lbl.grid(row=10, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        for v in (self.lr, self.batch, self.adv.dt, self.adv.jitter, self.adv.n_envs, self.adv.n_steps, self.maps.var,
+                  self.stars.lo, self.stars.hi):
             v.trace_add("write", lambda *_: self._update_warnings())
 
         row = ttk.Frame(self.body)
@@ -504,6 +526,8 @@ class ContinueTrainingPage(Page):
         for k, var in (("dt_ms", self.adv.dt), ("jitter_ms", self.adv.jitter), ("clip_seconds", self.adv.clip)):
             if k in env:
                 var.set(f"{env[k]:g}")
+        sr = meta.get("star_range") or {}
+        self.stars.set(sr.get("min"), sr.get("max"))  # same range as last time unless you change it
         folder = meta.get("maps_folder")
         if folder and Path(folder).exists() and folder != self.maps.get():
             self.maps.set(folder)
@@ -525,6 +549,7 @@ class ContinueTrainingPage(Page):
             notes=self.notes.get().strip(), set_active=self.set_active.get(),
         )
         self.adv.apply(spec)
+        self.stars.apply(spec)
         return spec
 
     def _update_warnings(self) -> None:
@@ -554,7 +579,11 @@ class ContinueTrainingPage(Page):
         source = spec.source_version or "?"
         if spec.source_checkpoint:
             source = f"checkpoint {Path(spec.source_checkpoint).name}" + (f" (from {spec.source_version})" if spec.source_version else "")
-        n = len(self.maps.result.valid) if self.maps.result else 0
+        n = len(self.stars.in_range())
+        if not n:
+            error(self, "No maps fall inside that star range (or the folder has no usable maps). "
+                        "Widen the range or clear it.", "Check the settings")
+            return
         rows = [
             ("Model", m.name),
             ("Mode", "osu!mania 4K"),
@@ -562,6 +591,7 @@ class ContinueTrainingPage(Page):
             ("New version", f"{next_v} (parent {spec.source_version or 'checkpoint'}); existing versions are kept"),
             ("Restores", "weights, optimiser state, step counter and learning schedule"),
             ("Training maps", f"{n} map(s) in {spec.maps_folder}"),
+            ("Star range", star_range_label(spec.min_stars, spec.max_stars)),
             ("Device", _device_summary(self.ctx, spec.device)),
             ("Additional training", f"{spec.timesteps:,} timesteps"),
             ("Batch size", f"{spec.batch_size:,}"),

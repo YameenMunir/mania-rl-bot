@@ -84,6 +84,94 @@ def version_label(v: VersionRecord) -> str:
     return f"{v.version}{'  [' + ', '.join(tags) + ']' if tags else ''}{acc}"
 
 
+class StarRangeField(ttk.Frame):
+    """Min / max star rating (blank = no limit) with a live "N of M maps in range" summary."""
+
+    def __init__(self, parent, on_change: Callable[[], None] | None = None):
+        super().__init__(parent, style="Card.TFrame")
+        self.lo, self.hi = tk.StringVar(), tk.StringVar()
+        self.scan: ScanResult | None = None
+        self.on_change = on_change
+        ttk.Label(self, text="From", style="Card.TLabel").grid(row=0, column=0)
+        ttk.Entry(self, textvariable=self.lo, width=6).grid(row=0, column=1, padx=(6, 10))
+        ttk.Label(self, text="to", style="Card.TLabel").grid(row=0, column=2)
+        ttk.Entry(self, textvariable=self.hi, width=6).grid(row=0, column=3, padx=(6, 6))
+        ttk.Label(self, text="★   (leave blank for no limit)", style="CardMuted.TLabel").grid(row=0, column=4)
+        ttk.Button(self, text="Clear", command=lambda: self.set(None, None)).grid(row=0, column=5, padx=(12, 0))
+        self.info = ttk.Label(self, text="", style="CardMuted.TLabel", wraplength=560, justify="left")
+        self.info.grid(row=1, column=0, columnspan=6, sticky="w", pady=(4, 0))
+        for v in (self.lo, self.hi):
+            v.trace_add("write", lambda *_: self._changed())
+
+    def _changed(self) -> None:
+        self._refresh_info()
+        if self.on_change:
+            self.on_change()
+
+    def get(self) -> tuple[float | None, float | None]:
+        out = []
+        for var, label in ((self.lo, "Minimum"), (self.hi, "Maximum")):
+            text = var.get().strip().replace(",", ".")
+            if not text:
+                out.append(None)
+                continue
+            try:
+                v = float(text)
+            except ValueError:
+                raise ModelError(f"{label} star rating must be a number (or blank).") from None
+            if not (v >= 0 and v < 100):
+                raise ModelError(f"{label} star rating must be between 0 and 100.")
+            out.append(v)
+        if out[0] is not None and out[1] is not None and out[0] > out[1]:
+            raise ModelError("Minimum star rating can't be higher than the maximum.")
+        return out[0], out[1]
+
+    def set(self, lo: float | None, hi: float | None) -> None:
+        self.lo.set("" if lo is None else f"{lo:g}")
+        self.hi.set("" if hi is None else f"{hi:g}")
+
+    def apply(self, spec) -> None:
+        spec.min_stars, spec.max_stars = self.get()
+
+    def in_range(self) -> list:
+        """Valid maps of the last scan inside the chosen range (all of them if the range is invalid)."""
+        if not self.scan:
+            return []
+        try:
+            lo, hi = self.get()
+        except ModelError:
+            return list(self.scan.valid)
+        return self.scan.in_star_range(lo, hi)
+
+    def show_scan(self, res: ScanResult | None) -> None:
+        self.scan = res
+        self._refresh_info()
+
+    def _refresh_info(self) -> None:
+        res = self.scan
+        if not res or not res.valid:
+            self.info.configure(text="")
+            return
+        lo_b, hi_b = res.star_bounds() or (0.0, 0.0)
+        text = f"This folder's maps range from {lo_b:.1f}★ to {hi_b:.1f}★."
+        guessed = sum(1 for c in res.valid if not c.stars_exact)
+        if guessed:
+            text += f" {guessed} rating(s) are estimates."
+        try:
+            lo, hi = self.get()
+        except ModelError as exc:
+            self.info.configure(text=f"{exc}", style="CardError.TLabel")
+            return
+        if lo is None and hi is None:
+            self.info.configure(text=text, style="CardMuted.TLabel")
+            return
+        n = len(res.in_star_range(lo, hi))
+        if n:
+            self.info.configure(text=f"{n} of {len(res.valid)} maps are in range. {text}", style="CardGood.TLabel")
+        else:
+            self.info.configure(text=f"No maps are in this range. {text}", style="CardError.TLabel")
+
+
 class MapsFolderField(ttk.Frame):
     """Folder entry + browse + background 4K validation summary."""
 

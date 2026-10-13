@@ -12,6 +12,7 @@ Training never overwrites an existing version. It always ends in one of:
 from __future__ import annotations
 
 import logging
+import math
 import multiprocessing as mp
 import os
 import queue
@@ -23,7 +24,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from maniabot.beatmaps import default_val_count, map_summary, scan_maps, split_maps
+from maniabot.beatmaps import default_val_count, map_summary, scan_maps, split_maps, star_range_label
 from maniabot.logs import event, setup_logging
 from maniabot.models import IN_USE, InvalidCheckpoint, ModelError, ModelStore, now_iso, verify_weights
 from maniabot.storage import Storage
@@ -47,6 +48,8 @@ class TrainingSpec:
     source_checkpoint: str | None = None  # ...or from this checkpoint file
     maps_folder: str = ""
     val_count: int = -1  # -1 = automatic
+    min_stars: float | None = None  # only use maps rated in [min_stars, max_stars]; None = no limit
+    max_stars: float | None = None
     timesteps: int = 300_000
     learning_rate: float = 3e-4
     batch_size: int = 1024
@@ -129,6 +132,12 @@ def validate_spec(spec: TrainingSpec) -> list[str]:
         errors.append("Checkpoint frequency must be at least 1,000 timesteps.")
     if not spec.maps_folder or not Path(spec.maps_folder).exists():
         errors.append("Choose a beatmap folder that exists.")
+    for label, v in (("Minimum", spec.min_stars), ("Maximum", spec.max_stars)):
+        if v is not None and not (math.isfinite(v) and v >= 0):
+            errors.append(f"{label} star rating must be a number of 0 or more.")
+    if (spec.min_stars is not None and spec.max_stars is not None
+            and spec.min_stars > spec.max_stars):
+        errors.append("Minimum star rating can't be higher than the maximum.")
     if spec.kind == "new" and (not spec.net_arch or any(int(n) < 1 for n in spec.net_arch)):
         errors.append("Network size must be a list of positive layer widths, e.g. 128,128.")
     if spec.kind == "continue" and not (spec.source_version or spec.source_checkpoint):
@@ -297,15 +306,25 @@ def run_training(
                 f"No usable osu!mania 4K maps in {spec.maps_folder}."
                 + (f" Rejected {len(scan.rejected)} file(s): {'; '.join(sorted(reasons)[:3])}" if scan.rejected else "")
             )
-        maps = scan.beatmaps
+        in_range = scan.in_star_range(spec.min_stars, spec.max_stars)
+        if not in_range:
+            lo, hi = scan.star_bounds() or (0.0, 0.0)
+            raise TrainingFailed(
+                f"No maps with {star_range_label(spec.min_stars, spec.max_stars)} in {spec.maps_folder}. "
+                f"It has {len(scan.valid)} usable map(s), rated {lo:.1f}★ to {hi:.1f}★."
+            )
+        stars_by_path = {c.beatmap.path: c.stars for c in in_range}
+        maps = [c.beatmap for c in in_range]
         n_val = default_val_count(len(maps)) if spec.val_count < 0 else spec.val_count
         train_maps, val_maps = split_maps(maps, n_val, spec.seed)
         val_is_heldout = bool(val_maps)
         if not val_maps:  # too few maps to hold any out: validate on (a few) training maps
             val_maps = train_maps[: min(4, len(train_maps))]
         session.update({
-            "training_maps": [map_summary(m) for m in train_maps],
-            "validation_maps": [map_summary(m) for m in val_maps],
+            "training_maps": [{**map_summary(m), "stars": stars_by_path.get(m.path)} for m in train_maps],
+            "validation_maps": [{**map_summary(m), "stars": stars_by_path.get(m.path)} for m in val_maps],
+            "star_range": {"min": spec.min_stars, "max": spec.max_stars,
+                           "maps_in_range": len(in_range), "maps_in_folder": len(scan.valid)},
             "validation_heldout": val_is_heldout,
             "rejected_maps": len(scan.rejected),
         })
@@ -617,6 +636,7 @@ def _save_version(store, spec, session, model, val_maps, heldout, source_desc, s
         "maps_folder": str(Path(spec.maps_folder).resolve()),
         "training_maps": session.get("training_maps", []),
         "validation_maps": session.get("validation_maps", []),
+        "star_range": session.get("star_range"),
         "validation": validation,
         "final_loss": last_loss,
         "best_checkpoint": session.get("best_checkpoint"),

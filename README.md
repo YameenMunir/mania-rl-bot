@@ -34,12 +34,12 @@ The memory and disk figures were measured on one machine with the default settin
 | Section | What you can do |
 |---|---|
 | **Dashboard** | Totals, last trained / best model, training status, device and osu! status, quick actions |
-| **Models → Create New Model** | Name, maps (a folder, or a single `.osu` / `.osz` / `.zip` via **File…**; 4K maps are validated, everything else is listed and skipped), training length, learning rate, batch size, checkpoints, device, seed, advanced PPO settings, then a summary before training starts |
+| **Models → Create New Model** | Name, maps (a folder, or a single `.osu` / `.osz` / `.zip` via **File…**; 4K maps are validated, everything else is listed and skipped), an optional **star range**, training length, learning rate, batch size, checkpoints, device, seed, advanced PPO settings, then a summary before training starts |
 | **Models → Existing Models** | Model Library: rename, archive, delete, open a model |
 | **Models → Version History** | Lineage tree of every version: test, generate a replay, continue training from it, set active, mark best, protect, favourite, archive, evaluate, compare, delete |
-| **Models → Continue Training** | Resume from the active, best or latest version, any older version, or a checkpoint. Weights, optimiser state, step counter and learning-rate schedule are restored. Warns when a changed setting could hurt |
+| **Models → Continue Training** | Resume from the active, best or latest version, any older version, or a checkpoint. Weights, optimiser state, step counter and learning-rate schedule are restored. Change the maps or **star range** for the new session. Warns when a changed setting could hurt |
 | **Training** | Live progress, losses, recent accuracy, checkpoints, ETA; pause, save checkpoint now, stop & save, cancel |
-| **Test Model** | Pick model, version and a 4K map (a `.osu` file, or an `.osz` / `.zip` to choose one of its difficulties), then **Watch Bot Play** (the model plays live in a 4K playfield, then save the play and open it in osu!) or **Generate Replay** (no watching; writes an `.osr`) |
+| **Test Model** | Pick model, version and a 4K map (a `.osu` file, an `.osz` / `.zip` to choose one of its difficulties, or browse a whole folder filtered by **star range**, with each map tagged trained on / held-out / new), then **Watch Bot Play** (the model plays live in a 4K playfield, then save the play and open it in osu!) or **Generate Replay** (no watching; writes an `.osr`) |
 | **Replays** | Replay history with metrics; open in osu!, show in folder, copy path, generate again, delete. Entries survive deleting the model |
 | **Settings** | Storage location (change it with a safe copy), storage usage, osu! stable folder, defaults, import old CLI runs, logs |
 
@@ -179,7 +179,47 @@ Only 4K maps with at least 50 notes are used. Everything else (5K to 14K, other 
 files or archives) is skipped and listed under **Show rejected maps** with the reason; nothing is
 converted.
 
-In **Test Model**, picking an `.osz` or `.zip` unpacks it and shows a list of its usable 4K
+### Training on a star range
+
+Both **Create New Model** and **Continue Training** have a **Star range** row under the beatmap folder.
+Enter a minimum and/or maximum (blank means no limit), and only maps rated inside it, inclusive, are used.
+The range applies to the held-out validation maps as well as the training maps, so validation scores from
+different sessions stay comparable. The form shows how many maps fall in range, and what range the whole
+folder covers.
+
+A typical plan is to start on easy maps and widen the range as the bot improves:
+
+1. Create the model with a range such as **From 1 to 2.5** stars.
+2. When validation accuracy levels off, use **Continue Training** with a wider range, for example
+   **1 to 4**. The form pre-fills the range the source version was trained on.
+
+Ratings are the real osu!mania star ratings, computed with
+[rosu-pp](https://github.com/MaxOhn/rosu-pp-py) (the same algorithm osu! uses; it comes with
+`requirements.txt`). If the library isn't installed or can't rate a particular map, a density-based
+estimate is used instead and the form says how many ratings are estimates. Ratings are cached by map
+checksum next to the unpacked mapsets, so rescanning a big folder stays quick. Each version records the
+range it was trained on, and the star rating of every map it used.
+
+### Browsing maps in Test Model
+
+Under the map path, **Test Model** has a folder browser. Choose a folder (it accepts the same `.osu` /
+`.osz` / `.zip` content as training), optionally set a **star range**, and click a map in the list to
+select it. The list shows stars, notes and length, and is sortable by clicking a column header. The
+**Show** menu answers "which maps can the bot play?":
+
+| Show | Lists |
+|---|---|
+| **Playable maps** | Every osu!mania 4K map in the folder |
+| **Unseen by this model** | Maps the selected version never trained on (held-out and brand-new): the fair test |
+| **Held-out maps** | Maps kept out of training to measure that version |
+| **Trained on** | Maps that version trained on |
+| **Can't play (not 4K)** | Maps the bot can't play (5K to 14K, other game modes, unreadable files), with the reason |
+
+Each row's **Status** is relative to the version chosen in step 1, and **Result** shows that version's
+recorded accuracy on the map when it has one (from its validation or any evaluation you ran). The folder
+and star range are remembered between visits.
+
+In **Test Model**, picking an `.osz` or `.zip` with **Choose .osu…** unpacks it and shows a list of its usable 4K
 difficulties to choose from. A map pack with many mapsets lists every difficulty in it.
 
 ## Watching replays in osu! stable

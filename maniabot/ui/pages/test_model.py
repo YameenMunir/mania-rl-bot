@@ -11,6 +11,7 @@ from maniabot.models import ModelError
 from maniabot.replays import generate_replay
 from maniabot.ui import theme
 from maniabot.ui.pages.base import Page, version_label
+from maniabot.ui.pages.map_browser import MapBrowser
 from maniabot.ui.pages.watch import WatchWindow
 from maniabot.ui.widgets import Card, Dialog, EmptyState, Table, KeyValueGrid, error, fmt_ms, fmt_pct, message
 
@@ -52,8 +53,17 @@ class TestModelPage(Page):
         self.recent_cb = ttk.Combobox(b, textvariable=self.recent_var, state="readonly")
         self.recent_cb.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
         self.recent_cb.bind("<<ComboboxSelected>>", lambda _e: self.map_var.set(self.recent_var.get()))
+        ttk.Separator(b, orient="horizontal").grid(row=2, column=0, columnspan=3, sticky="ew", pady=(14, 10))
+        ttk.Label(b, text="Or browse a folder of maps", style="CardH3.TLabel").grid(
+            row=3, column=0, columnspan=3, sticky="w")
+        saved = self.ctx.settings["test_star_range"] or [None, None]
+        self.browser = MapBrowser(
+            b, self.ctx, on_pick=self.map_var.set, on_change=self._browser_changed,
+            folder=self.ctx.settings["test_maps_folder"] or self.ctx.settings["default_maps"],
+            star_range=(saved[0], saved[1]))
+        self.browser.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         self.map_status = ttk.Label(b, text="", style="CardMuted.TLabel", wraplength=760, justify="left")
-        self.map_status.grid(row=2, column=0, columnspan=3, sticky="w", pady=(8, 0))
+        self.map_status.grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 0))
         self.map_var.trace_add("write", lambda *_: self._check_map())
 
         c3 = Card(self.main, "3. How do you want to test it?")
@@ -132,6 +142,7 @@ class TestModelPage(Page):
     def on_show(self, model_id: str | None = None, version: str | None = None, mode: str | None = None, **_) -> None:
         self._reload_models(model_id, version)
         self._osu_changed()
+        self.browser.ensure_scanned()
         recent = [p for p in self.ctx.settings["recent_maps"] if Path(p).exists()]
         self.recent_cb.configure(values=recent)
         self.recent_var.set("Recent maps…" if recent else "No recent maps yet")
@@ -197,6 +208,19 @@ class TestModelPage(Page):
         self.v_info.configure(text=f"Trained {v.meta.get('total_timesteps') or 0:,} timesteps  ·  validation "
                                    f"{fmt_pct(v.val_accuracy)}  ·  timing noise {env.get('jitter_ms', 0):g} ms"
                                    f"  ·  parent {v.parent or 'none'}")
+        m = self._model()
+        evals = self.ctx.store.list_evaluations(m.id, v.version) if m else []
+        self.browser.set_context(v.meta, evals)
+
+    def _browser_changed(self) -> None:
+        """Remember the folder and star range between visits."""
+        try:
+            lo, hi = self.browser.stars.get()
+        except ModelError:
+            lo = hi = None
+        self.ctx.settings["test_maps_folder"] = self.browser.folder.get()
+        self.ctx.settings["test_star_range"] = [lo, hi]
+        self.ctx.settings.save()
 
     def _osu_changed(self) -> None:
         o = self.ctx.osu or {}

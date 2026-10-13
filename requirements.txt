@@ -3,3 +3,4 @@ gymnasium
 stable-baselines3
 torch
 matplotlib
+rosu-pp-py
