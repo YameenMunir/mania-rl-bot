@@ -8,13 +8,20 @@ from tkinter import filedialog, ttk
 from maniabot import osu_integration
 from maniabot.beatmaps import check_beatmap, extract_osz
 from maniabot.models import ModelError
+from maniabot.mods import CHOICES as MOD_CHOICES, parse_mods
 from maniabot.ranks import mania_rank
 from maniabot.replays import generate_replay
 from maniabot.ui import theme
 from maniabot.ui.pages.base import Page, version_label
 from maniabot.ui.pages.map_browser import MapBrowser
 from maniabot.ui.pages.watch import WatchWindow
-from maniabot.ui.widgets import Card, Dialog, EmptyState, Table, KeyValueGrid, error, fmt_ms, fmt_pct, message
+from maniabot.ui.widgets import (
+    Card, Dialog, EmptyState, KeyValueGrid, Table, error, fmt_ms, fmt_pct, help_icon, message,
+)
+
+PLAY_MODS_HELP = ("Play the map with osu! mods. DT plays it 1.5x faster and HT 0.75x; HR shrinks the hit windows "
+                  "(divides them by 1.4) and EZ widens them (x1.4). The replay records the mods, so osu! plays it "
+                  "back with them. A bot does best on mods it trained with.")
 
 
 class TestModelPage(Page):
@@ -72,8 +79,16 @@ class TestModelPage(Page):
         b = c3.body
         b.columnconfigure(0, weight=1, uniform="m")
         b.columnconfigure(1, weight=1, uniform="m")
+        mr = ttk.Frame(b, style="Card.TFrame")
+        mr.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ttk.Label(mr, text="Mods", style="Card.TLabel").pack(side="left")
+        help_icon(mr, PLAY_MODS_HELP).pack(side="left", padx=(4, 0))
+        self.mods = tk.StringVar(value="NM")
+        ttk.Combobox(mr, textvariable=self.mods, values=MOD_CHOICES, state="readonly", width=8).pack(side="left", padx=8)
+        self.mods_hint = ttk.Label(mr, text="", style="CardMuted.TLabel")
+        self.mods_hint.pack(side="left")
         w = ttk.Frame(b, style="Card.TFrame")
-        w.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        w.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
         ttk.Label(w, text="Watch Bot Play", style="CardH3.TLabel").pack(anchor="w")
         ttk.Label(w, text="The bot plays the map live in a 4K playfield on your screen, in real time. Afterwards you "
                           "can save the play and watch it in osu! stable.",
@@ -88,7 +103,7 @@ class TestModelPage(Page):
         self.watch_btn.pack(anchor="w", pady=(10, 0))
 
         g = ttk.Frame(b, style="Card.TFrame")
-        g.grid(row=0, column=1, sticky="nsew")
+        g.grid(row=1, column=1, sticky="nsew")
         ttk.Label(g, text="Generate Replay", style="CardH3.TLabel").pack(anchor="w")
         ttk.Label(g, text="Runs the bot without showing it and saves an osu! stable replay (.osr) you can open in "
                           "osu! whenever you like.", style="CardMuted.TLabel", wraplength=360, justify="left").pack(
@@ -113,9 +128,9 @@ class TestModelPage(Page):
         self.result = Card(self.main, "Replay ready")
         self.res_kv = KeyValueGrid(self.result.body, columns=3)
         self.res_kv.grid(row=0, column=0, sticky="ew")
-        for k, l in (("acc", "Accuracy (simulator)"), ("rank", "Rank"), ("judg", "MAX / 300 / 200 / 100 / 50 / miss"), ("combo", "Max combo"),
+        for k, l in (("acc", "Accuracy (simulator)"), ("score", "Score"), ("rank", "Rank"), ("judg", "MAX / 300 / 200 / 100 / 50 / miss"), ("combo", "Max combo"),
                      ("extra", "Extra presses"), ("holds", "Hold notes completed"), ("offset", "Mean offset / deviation"),
-                     ("time", "Processing time"), ("model", "Model"), ("lanes", "Lane accuracy")):
+                     ("time", "Processing time"), ("model", "Model"), ("mods", "Mods"), ("lanes", "Lane accuracy")):
             self.res_kv.add(k, l)
         self.res_path = ttk.Label(self.result.body, text="", style="CardMuted.TLabel", wraplength=760)
         self.res_path.grid(row=1, column=0, sticky="w", pady=(8, 0))
@@ -206,9 +221,11 @@ class TestModelPage(Page):
             return
         v = self.versions[i]
         env = v.meta.get("env_config") or {}
+        trained_mods = ", ".join(v.meta.get("mods") or ["NM"])
         self.v_info.configure(text=f"Trained {v.meta.get('total_timesteps') or 0:,} timesteps  ·  validation "
                                    f"{fmt_pct(v.val_accuracy)}  ·  timing noise {env.get('jitter_ms', 0):g} ms"
-                                   f"  ·  parent {v.parent or 'none'}")
+                                   f"  ·  mods {trained_mods}  ·  parent {v.parent or 'none'}")
+        self.mods_hint.configure(text=f"This version trained with {trained_mods}.")
         m = self._model()
         evals = self.ctx.store.list_evaluations(m.id, v.version) if m else []
         self.browser.set_context(v.meta, evals)
@@ -316,7 +333,7 @@ class TestModelPage(Page):
         if not self._ready():
             return
         speed = float(self.speed.get().rstrip("x"))
-        WatchWindow(self, self.ctx, self._model().id, self._version(), self.check, speed)
+        WatchWindow(self, self.ctx, self._model().id, self._version(), self.check, speed, parse_mods(self.mods.get()))
 
     def generate(self) -> None:
         if not self._ready():
@@ -330,6 +347,7 @@ class TestModelPage(Page):
             self.ctx.settings["player_name"] = player
             self.ctx.settings.save()
         mid, ver, path = self._model().id, self._version(), self.check.path
+        mods = parse_mods(self.mods.get())
         self._stop = False
         self.gen_btn.state(["disabled"])
         self.cancel_btn.pack(side="left", padx=6)
@@ -341,7 +359,7 @@ class TestModelPage(Page):
             self.ctx.tasks.post(lambda: self.gen_status.configure(text=msg, style="CardMuted.TLabel"))
 
         self.ctx.tasks.run(lambda: generate_replay(self.ctx.store, self.ctx.history, mid, ver, path, player, tries,
-                                                   progress=progress, should_stop=lambda: self._stop),
+                                                   progress=progress, should_stop=lambda: self._stop, mods=mods),
                            self._generated, self._gen_failed, name="generate-replay")
 
     def _cancel(self) -> None:
@@ -370,6 +388,7 @@ class TestModelPage(Page):
         self.gen_status.configure(text="✓ Replay saved.", style="CardGood.TLabel")
         m = rec["metrics"]
         self.res_kv.set("acc", fmt_pct(m["accuracy"]))
+        self.res_kv.set("score", f"{m['score']:,}" if m.get("score") is not None else "—")
         self.res_kv.set("rank", mania_rank(m["accuracy"], m["counts"]) or "—")
         self.res_kv.set("judg", " / ".join(str(c) for c in m["counts"]))
         self.res_kv.set("combo", f"{m['max_combo']:,}")
@@ -378,6 +397,7 @@ class TestModelPage(Page):
         self.res_kv.set("offset", f"{fmt_ms(m['mean_offset_ms'])} / {m['timing_std_ms']:.1f} ms" if m["timing_std_ms"] is not None else "—")
         self.res_kv.set("time", f"{rec['processing_s']:.1f}s")
         self.res_kv.set("model", f"{rec['model_name']} {rec['version']}")
+        self.res_kv.set("mods", rec.get("mods") or "NM")
         self.res_kv.set("lanes", "  ".join(fmt_pct(l["accuracy"], 0) for l in m["lanes"]))
         self.res_path.configure(text=rec["path"])
         self.result.grid(row=3, column=0, sticky="ew", pady=(14, 0))

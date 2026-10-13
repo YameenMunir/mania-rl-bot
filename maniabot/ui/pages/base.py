@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from maniabot.beatmaps import ScanResult, scan_maps
 from maniabot.models import ModelError, VersionRecord
+from maniabot.mods import CHOICES as MOD_CHOICES, NC, mods_label, parse_mod_list
 from maniabot.ui import theme
 from maniabot.ui.widgets import Dialog, ScrollFrame, Table, fmt_pct, help_icon
 
@@ -274,6 +275,61 @@ def parse_float(var: tk.StringVar, label: str) -> float:
     except ValueError:
         raise ModelError(f"{label} must be a number.") from None
 
+
+class ModsField(ttk.Frame):
+    """The mod combinations to practise; every training play picks one of them at random."""
+
+    def __init__(self, parent, on_change: Callable[[], None] | None = None):
+        super().__init__(parent, style="Card.TFrame")
+        self.on_change = on_change
+        self.vars = {c: tk.BooleanVar(value=c == "NM") for c in MOD_CHOICES}
+        for i, c in enumerate(MOD_CHOICES):
+            ttk.Checkbutton(self, text=c, variable=self.vars[c], style="Card.TCheckbutton",
+                            command=self._changed).grid(row=0, column=i, sticky="w", padx=(0, 10))
+        self.info = ttk.Label(self, text="", style="CardMuted.TLabel", wraplength=560, justify="left")
+        self.info.grid(row=1, column=0, columnspan=len(MOD_CHOICES), sticky="w", pady=(4, 0))
+        self._refresh_info()
+
+    def _changed(self) -> None:
+        self._refresh_info()
+        if self.on_change:
+            self.on_change()
+
+    def get(self) -> list[str]:
+        chosen = [c for c, v in self.vars.items() if v.get()]
+        if not chosen:
+            raise ModelError("Choose at least one mod combination to train with (NM = no mod).")
+        return chosen
+
+    def set(self, mods: list[str] | None) -> None:
+        try:
+            labels = {mods_label(b & ~NC) for b in parse_mod_list(mods or ["NM"])}  # NC plays exactly like DT
+        except ValueError:
+            labels = {"NM"}
+        labels &= set(MOD_CHOICES)
+        for c, v in self.vars.items():
+            v.set(c in (labels or {"NM"}))
+        self._refresh_info()
+
+    def apply(self, spec) -> None:
+        spec.mods = self.get()
+
+    def _refresh_info(self) -> None:
+        chosen = [c for c, v in self.vars.items() if v.get()]
+        if not chosen:
+            self.info.configure(text="Choose at least one.", style="CardError.TLabel")
+        elif chosen == ["NM"]:
+            self.info.configure(text="Every play is without mods.", style="CardMuted.TLabel")
+        elif len(chosen) == 1:
+            self.info.configure(text=f"Every play uses {chosen[0]}.", style="CardMuted.TLabel")
+        else:
+            self.info.configure(text=f"Each practice play picks one of these {len(chosen)} at random.",
+                                style="CardMuted.TLabel")
+
+
+MODS_HELP = ("Mods change how a map plays. DT plays it 1.5x faster and HT 0.75x; HR shrinks the hit windows "
+             "(divides them by 1.4) and EZ widens them (x1.4). Tick several to train one bot that handles all of them. "
+             "Validation cycles through the ticked mods.")
 
 DEVICE_CHOICES = ("auto", "cpu", "cuda")
 DEVICE_HELP = ("Auto uses a CUDA GPU when one is available, otherwise the CPU. This network is small, so the "

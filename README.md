@@ -82,7 +82,8 @@ Step-by-step instructions for the common tasks. The sections after this one go i
    1 to 2.5 stars, to train only on easier maps. **Validation maps** (default **Auto**) is how many maps are
    held out of training to measure the model fairly.
 4. **Training:** pick a **Training length**, from **Quick test (50k)** through **Standard (1M)** to
-   **Long (3M)** or **Custom**. The other settings have sensible defaults; **Show advanced settings**
+   **Long (3M)** or **Custom**. Under **Mods**, tick the [mods](#mods) to train with (default **NM**, no
+   mod). The other settings have sensible defaults; **Show advanced settings**
    holds PPO settings, network size and the number of **Parallel games** (lower it if your PC runs out of
    memory).
 5. Click **Review & Start Training**, check the summary, and click **Start Training**.
@@ -118,14 +119,16 @@ When it finishes, you can **Test this version**, **Generate replay**, **View ver
 3. Choose a map: **Choose .osu…** for a single map (an `.osz` / `.zip` lets you pick a difficulty),
    **Browse osu! Songs…** for your osu! library, or **Or browse a folder of maps** to pick from a list with
    star ratings and filters such as **Unseen by this model**.
-4. Pick a **Speed** (0.5x to 2x) and click **Watch Bot Play**. The bot plays live in a 4K playfield and
-   shows its [rank](#ranks) at the end.
+4. Optionally pick **Mods** (for example **DT** or **HR**; see [Mods](#mods)). Pick a **Speed** (0.5x to
+   2x) and click **Watch Bot Play**. The bot plays live in a 4K playfield and shows its [rank](#ranks) at
+   the end.
 5. Afterwards, click **Save as replay**, or **Save & watch in osu!** to open it in osu! stable.
 
 ### Make a replay for osu!
 
 1. **Test Model → Generate Replay**, then choose a model, version and map as above.
-2. Optionally set **Attempts (keep best)** to keep the best of several plays, and a **Player name**.
+2. Optionally pick **Mods**, set **Attempts (keep best)** to keep the best of several plays, and set a
+   **Player name**.
 3. Click **Generate Replay**. When it finishes you can **Open in osu!**, **Import map into osu!** (if osu!
    doesn't have that map yet), **Open Replay Folder** or **Copy Replay Path**.
 
@@ -280,6 +283,7 @@ running game: it only hands osu! a replay or mapset file, the same as double-cli
 | `maniabot/evaluation.py` | Inference and evaluation metrics (timing, lanes, holds, misses, extra presses) |
 | `maniabot/charts.py` | Comparison charts: learning curves across a version's lineage, metric bar charts, hover tooltips |
 | `maniabot/ranks.py` | osu!mania rank (SS / S / A / B / C / D) from accuracy and judgement counts |
+| `maniabot/mods.py` | DT / NC / HT / HR / EZ: parsing, labels, song speed and hit-window scaling |
 | `maniabot/replays.py` | Replay generation and history |
 | `maniabot/beatmaps.py` | osu!mania 4K validation with reasons for rejected maps; unpacks `.osz` / `.zip` map archives into a cache |
 | `maniabot/osu_integration.py` | Finds osu! stable, opens replays and mapsets |
@@ -312,6 +316,9 @@ python make_demo_maps.py                       # writes maps/demo/*.osu
 python evaluate.py --baseline --maps maps/demo # sanity check: oracle should score ~100%
 python train.py --maps maps/demo --timesteps 300000 --out runs/demo
 python evaluate.py --run runs/demo --maps maps/demo
+python train.py --maps maps/demo --mods "NM, DT, HR" --out runs/mods   # each play picks one mod at random
+python evaluate.py --run runs/mods --maps maps/demo --mods DT
+python export_replay.py --run runs/mods --maps maps/demo --mods DT --out replays
 ```
 
 Watch `runs/demo/episodes.csv` (one row per play) or `runs/demo/learning_curve.png`.
@@ -364,6 +371,34 @@ estimate is used instead and the form says how many ratings are estimates. Ratin
 checksum next to the unpacked mapsets, so rescanning a big folder stays quick. Each version records the
 range it was trained on, and the star rating of every map it used.
 
+### Mods
+
+The bot can train and play with the osu!mania mods that change timing and hit windows:
+
+| Mod | Effect in the simulator (as in osu!mania stable) |
+|---|---|
+| **DT** (and NC) | The song plays 1.5x faster, so notes come 1.5x denser. The hit windows keep their real-time size, as in osu!mania. |
+| **HT** | The song plays at 0.75x speed. |
+| **HR** | Every hit window is divided by 1.4 (tighter timing). |
+| **EZ** | Every hit window is multiplied by 1.4 (looser timing). |
+
+They combine as in osu! (for example **DTHR**), except EZ with HR and DT with HT.
+
+- **Training:** **Create New Model** and **Continue Training** have a **Mods** row. Tick one combination to
+  train only with it, or several to train one bot that handles all of them; each practice play picks one
+  at random. Validation cycles through the ticked mods. Continue Training pre-fills the mods the source
+  version used, and warns if you change them because validation scores stop being directly comparable.
+- **Testing:** **Test Model** has a **Mods** picker for both **Watch Bot Play** and **Generate Replay**, and
+  the **Evaluate…** dialog has one too. Any version can play with any mods, but it does best on the ones it
+  trained with. The page shows which mods those were.
+- **Replays:** the `.osr` stores the mods, so osu! plays it back with them and shows them on the results
+  screen. Frame times are written in song time, as osu! expects. The mods also appear in the file name
+  (for example `+DT`) and in a **Mods** column under **Replays**.
+
+The bot's inputs don't include the mods. It sees how soon each note arrives in real time, so DT just looks
+like a denser map, and it learns to time well enough for the tightest windows it trains with. That also
+means older models load and play with mods without retraining.
+
 ### Ranks
 
 When a **Watch Bot Play** run finishes, the playfield shows the rank the bot earned (**SS**, **S**, **A**,
@@ -383,7 +418,25 @@ cut-offs:
 A play you stop early gets no rank. The rank is the simulator's: osu! re-judges the replay with its own
 rules, so when you open the replay in osu! stable, the results screen there is osu!'s own and can differ
 slightly (mostly on 50/100 edges and hold-note releases). The replay file carries the simulator's
-judgement counts, which osu! shows in the replay's score header.
+judgement counts and score, which osu! shows in the replay's score header.
+
+### Score
+
+The score is osu!mania stable's (ScoreV1), out of 1,000,000. **Watch Bot Play** shows it live (top right),
+and **Generate Replay**, the **Replays** list and replay details show it too. The same number is written
+into the `.osr`.
+
+- Half of the score comes from accuracy, where a MAX (rainbow 300) is worth 320 and a 300 is worth 300.
+  The other half rewards keeping a run of good hits: a 200 or worse drains a bonus meter and a miss
+  empties it.
+- So **only a play where every note is MAX scores 1,000,000**. All 300s score 968,750, even though both
+  count as 100% accuracy.
+- EZ and HT each halve the score (EZHT gives 250,000 at most). DT, NC and HR don't change the maximum, but
+  they soften the bonus lost on a 200 or worse, as in osu!.
+
+The simulator judges each hold note once, on the press, and checks the release separately. osu! also
+judges the release, so on maps with hold notes the score in osu! can differ a little. On maps without
+holds they should match when osu! judges the hits the same way.
 
 ### Browsing maps in Test Model
 

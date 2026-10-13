@@ -17,6 +17,7 @@ from maniabot.beatmaps import check_beatmap, map_summary
 from maniabot.evaluation import POLICIES, PlayResult, play_map, strip_private
 from maniabot.logs import event
 from maniabot.models import IN_USE, ModelError, ModelStore, now_iso
+from maniabot.mods import mods_label, parse_mods
 from maniabot.storage import Storage, atomic_write_bytes, atomic_write_json, read_json
 from osr_writer import build_osr
 
@@ -126,12 +127,14 @@ def write_replay(
         beatmap_md5=bm.md5,
         player=player,
         counts=info["counts"],
-        score=int(info["accuracy"] * 1_000_000),
+        score=int(info["score"]),
         max_combo=info["max_combo"],
         events=result.events,
+        mods=result.mods,
     )
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    base = safe_filename(f"{player} - {bm.artist} - {bm.title} [{bm.version}] ({rec_model.name} {version}) {stamp}")
+    mods = f" +{mods_label(result.mods)}" if result.mods else ""
+    base = safe_filename(f"{player} - {bm.artist} - {bm.title} [{bm.version}]{mods} ({rec_model.name} {version}) {stamp}")
     target = history.dir / f"{base}.osr"
     if target.exists():
         target = history.dir / f"{base} {uuid.uuid4().hex[:4]}.osr"
@@ -145,6 +148,7 @@ def write_replay(
         "model_id": model_id,
         "model_name": rec_model.name,
         "version": version,
+        "mods": mods_label(result.mods),
         "player": player,
         "tries": tries,
         "seed": seed,
@@ -152,8 +156,8 @@ def write_replay(
         "processing_s": round(processing_s if processing_s is not None else result.seconds, 2),
     }
     history.add(record)
-    event(log, "replay.generated", model=model_id, version=version, map=bm.name, path=target,
-          acc=round(info["accuracy"], 4))
+    event(log, "replay.generated", model=model_id, version=version, map=bm.name, mods=mods_label(result.mods),
+          path=target, acc=round(info["accuracy"], 4))
     return record
 
 
@@ -168,9 +172,14 @@ def generate_replay(
     seed: int = 0,
     progress: Callable[[str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    mods: int | str = 0,
 ) -> dict[str, Any]:
-    """Run inference on a 4K map without watching and save an .osr replay."""
+    """Run inference on a 4K map without watching and save an .osr replay (with `mods`, e.g. "DT")."""
     progress = progress or (lambda _m: None)
+    try:
+        mods = parse_mods(mods)
+    except ValueError as exc:
+        raise ModelError(str(exc)) from None
     t0 = time.perf_counter()
     check = check_beatmap(beatmap_path)
     if not check.ok:
@@ -180,10 +189,11 @@ def generate_replay(
         progress("Loading model…")
         model = POLICIES.load(ver.weights)
         best = None
+        name = check.beatmap.name + (f" +{mods_label(mods)}" if mods else "")
         for k in range(max(1, tries)):
-            progress(f"Playing {check.beatmap.name} ({k + 1}/{tries})…" if tries > 1 else f"Playing {check.beatmap.name}…")
+            progress(f"Playing {name} ({k + 1}/{tries})…" if tries > 1 else f"Playing {name}…")
             res = play_map(model, check.beatmap, ver.meta.get("env_config"), seed=seed + k, record=True,
-                           should_stop=should_stop)
+                           should_stop=should_stop, mods=mods)
             if best is None or res.info["accuracy"] > best.info["accuracy"]:
                 best = res
         progress("Writing replay…")

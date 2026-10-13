@@ -7,13 +7,14 @@ from tkinter import ttk
 
 from maniabot.beatmaps import ScanResult, default_val_count, star_range_label
 from maniabot.models import ModelError, slugify
+from maniabot.mods import mod_list_label
 from maniabot.storage import dir_size, human_size
 from maniabot.training import (
     DEFAULT_NET_ARCH, TrainingSpec, compatibility_warnings, default_n_envs, validate_spec,
 )
 from maniabot.ui.pages.base import (
-    DEVICE_CHOICES, DEVICE_HELP, LENGTH_HELP, LENGTH_PRESETS, MapsFolderField, Page, StarRangeField, form_row, int_var,
-    parse_float, parse_int, summary_dialog, version_label,
+    DEVICE_CHOICES, DEVICE_HELP, LENGTH_HELP, LENGTH_PRESETS, MODS_HELP, MapsFolderField, ModsField, Page, StarRangeField,
+    form_row, int_var, parse_float, parse_int, summary_dialog, version_label,
 )
 from maniabot.ui.widgets import Card, EmptyState, KeyValueGrid, Table, error, fmt_date, fmt_int, fmt_pct
 
@@ -166,23 +167,25 @@ class CreateModelPage(Page):
         b.columnconfigure(1, weight=1)
         self.length = LengthField(b, 300_000)
         form_row(b, 0, "Training length", self.length, LENGTH_HELP, stretch=False)
+        self.mods = ModsField(b)
+        form_row(b, 1, "Mods", self.mods, MODS_HELP)
         self.lr = tk.StringVar(value="0.0003")
-        form_row(b, 1, "Learning rate", ttk.Entry(b, textvariable=self.lr, width=12),
+        form_row(b, 2, "Learning rate", ttk.Entry(b, textvariable=self.lr, width=12),
                  "How big each learning step is. 0.0003 is a good default.")
         self.batch = int_var(1024)
-        form_row(b, 2, "Batch size", ttk.Entry(b, textvariable=self.batch, width=12),
+        form_row(b, 3, "Batch size", ttk.Entry(b, textvariable=self.batch, width=12),
                  "Experience samples per gradient step.")
         self.ckpt = int_var(100_000)
-        form_row(b, 3, "Checkpoint every", ttk.Entry(b, textvariable=self.ckpt, width=12),
+        form_row(b, 4, "Checkpoint every", ttk.Entry(b, textvariable=self.ckpt, width=12),
                  "Save (and validate) a checkpoint every N timesteps, so you can resume from it later.")
         self.device = tk.StringVar(value=s["default_device"])
-        form_row(b, 4, "Device", ttk.Combobox(b, textvariable=self.device, values=DEVICE_CHOICES, state="readonly", width=10),
+        form_row(b, 5, "Device", ttk.Combobox(b, textvariable=self.device, values=DEVICE_CHOICES, state="readonly", width=10),
                  DEVICE_HELP)
         self.seed = int_var(0)
-        form_row(b, 5, "Random seed", ttk.Entry(b, textvariable=self.seed, width=12),
+        form_row(b, 6, "Random seed", ttk.Entry(b, textvariable=self.seed, width=12),
                  "Same seed + same settings = reproducible run.")
         self.adv = AdvancedSection(b, new_model=True)
-        self.adv.grid(row=6, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        self.adv.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(8, 0))
 
         row = ttk.Frame(self.body)
         row.grid(row=3, column=0, sticky="e", pady=(16, 0))
@@ -244,6 +247,7 @@ class CreateModelPage(Page):
             )
             self.adv.apply(spec)
             self.stars.apply(spec)
+            self.mods.apply(spec)
             errs = validate_spec(spec)
             if errs:
                 raise ModelError("\n".join(errs))
@@ -258,6 +262,7 @@ class CreateModelPage(Page):
             ("Mode", "osu!mania 4K"),
             ("Training maps", f"{n - v if heldout else n} from {spec.maps_folder}"),
             ("Star range", star_range_label(spec.min_stars, spec.max_stars)),
+            ("Mods", mod_list_label(spec.mod_bits)),
             ("Validation maps", f"{v} held out" if heldout else f"{min(4, n)} training maps (not enough maps to hold any out)"),
             ("Device", _device_summary(self.ctx, spec.device)),
             ("Training length", f"{spec.timesteps:,} timesteps"),
@@ -349,22 +354,24 @@ class ContinueTrainingPage(Page):
         form_row(b, 2, "Beatmap folder", self.maps)
         self.stars = StarRangeField(b)
         form_row(b, 3, "Star range", self.stars, STAR_HELP)
+        self.mods = ModsField(b, on_change=lambda: self._update_warnings())
+        form_row(b, 4, "Mods", self.mods, MODS_HELP)
         self.batch = int_var(1024)
-        form_row(b, 4, "Batch size", ttk.Entry(b, textvariable=self.batch, width=12))
+        form_row(b, 5, "Batch size", ttk.Entry(b, textvariable=self.batch, width=12))
         self.ckpt_every = int_var(100_000)
-        form_row(b, 5, "Checkpoint every", ttk.Entry(b, textvariable=self.ckpt_every, width=12))
+        form_row(b, 6, "Checkpoint every", ttk.Entry(b, textvariable=self.ckpt_every, width=12))
         self.device = tk.StringVar(value=self.ctx.settings["default_device"])
-        form_row(b, 6, "Device", ttk.Combobox(b, textvariable=self.device, values=DEVICE_CHOICES, state="readonly",
+        form_row(b, 7, "Device", ttk.Combobox(b, textvariable=self.device, values=DEVICE_CHOICES, state="readonly",
                                               width=10), DEVICE_HELP)
         self.notes = tk.StringVar()
-        form_row(b, 7, "Notes for the new version", ttk.Entry(b, textvariable=self.notes, width=60))
+        form_row(b, 8, "Notes for the new version", ttk.Entry(b, textvariable=self.notes, width=60))
         self.set_active = tk.BooleanVar(value=True)
         ttk.Checkbutton(b, text="Make the new version the active version when training finishes",
-                        variable=self.set_active, style="Card.TCheckbutton").grid(row=8, column=1, sticky="w", pady=4)
+                        variable=self.set_active, style="Card.TCheckbutton").grid(row=9, column=1, sticky="w", pady=4)
         self.adv = AdvancedSection(b, new_model=False)
-        self.adv.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        self.adv.grid(row=10, column=0, columnspan=4, sticky="ew", pady=(8, 0))
         self.warn_lbl = ttk.Label(b, text="", style="CardWarn.TLabel", wraplength=760, justify="left")
-        self.warn_lbl.grid(row=10, column=0, columnspan=4, sticky="w", pady=(10, 0))
+        self.warn_lbl.grid(row=11, column=0, columnspan=4, sticky="w", pady=(10, 0))
         for v in (self.lr, self.batch, self.adv.dt, self.adv.jitter, self.adv.n_envs, self.adv.n_steps, self.maps.var,
                   self.stars.lo, self.stars.hi):
             v.trace_add("write", lambda *_: self._update_warnings())
@@ -528,6 +535,7 @@ class ContinueTrainingPage(Page):
                 var.set(f"{env[k]:g}")
         sr = meta.get("star_range") or {}
         self.stars.set(sr.get("min"), sr.get("max"))  # same range as last time unless you change it
+        self.mods.set(meta.get("mods"))  # and the same mods
         folder = meta.get("maps_folder")
         if folder and Path(folder).exists() and folder != self.maps.get():
             self.maps.set(folder)
@@ -550,6 +558,7 @@ class ContinueTrainingPage(Page):
         )
         self.adv.apply(spec)
         self.stars.apply(spec)
+        self.mods.apply(spec)
         return spec
 
     def _update_warnings(self) -> None:
@@ -592,6 +601,7 @@ class ContinueTrainingPage(Page):
             ("Restores", "weights, optimiser state, step counter and learning schedule"),
             ("Training maps", f"{n} map(s) in {spec.maps_folder}"),
             ("Star range", star_range_label(spec.min_stars, spec.max_stars)),
+            ("Mods", mod_list_label(spec.mod_bits)),
             ("Device", _device_summary(self.ctx, spec.device)),
             ("Additional training", f"{spec.timesteps:,} timesteps"),
             ("Batch size", f"{spec.batch_size:,}"),

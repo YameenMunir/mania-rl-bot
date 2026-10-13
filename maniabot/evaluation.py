@@ -19,6 +19,7 @@ import numpy as np
 from mania_env import ACC_WEIGHT, JUDGEMENTS, ManiaEnv
 from maniabot.logs import event
 from maniabot.models import InvalidCheckpoint, verify_weights
+from maniabot.mods import mod_list_label, mods_label
 from osu_parser import Beatmap
 
 log = logging.getLogger("maniabot.evaluation")
@@ -85,18 +86,21 @@ class PlayResult:
     events: list[tuple[float, int, int]]
     metrics: dict[str, Any]
     seconds: float = 0.0
+    mods: int = 0  # osu! mod bit flags the map was played with
 
 
-def make_play_env(bm: Beatmap, env_cfg: dict[str, Any], record: bool = False) -> ManiaEnv:
+def make_play_env(bm: Beatmap, env_cfg: dict[str, Any], record: bool = False, mods: int = 0) -> ManiaEnv:
     cfg = {**ENV_DEFAULTS, **(env_cfg or {})}
-    return ManiaEnv([bm], dt_ms=float(cfg["dt_ms"]), clip_seconds=None, jitter_ms=float(cfg["jitter_ms"]), record=record)
+    return ManiaEnv([bm], dt_ms=float(cfg["dt_ms"]), clip_seconds=None, jitter_ms=float(cfg["jitter_ms"]), record=record,
+                    mods=mods)
 
 
 def final_events(env: ManiaEnv) -> list[tuple[float, int, int]]:
+    """The recorded key events (song time), with anything still held released at the end."""
     events = list(env.events)
-    for lane in range(env.KEYS):  # release anything still held at the end
+    for lane in range(env.KEYS):
         if env.keys_down[lane]:
-            events.append((env.t, lane, 0))
+            events.append((env.t * env.rate, lane, 0))
     return events
 
 
@@ -107,10 +111,11 @@ def play_map(
     seed: int = 0,
     record: bool = False,
     should_stop: Callable[[], bool] | None = None,
+    mods: int = 0,
 ) -> PlayResult:
     """Play a full map with the policy (actions sampled like in training)."""
     t0 = time.perf_counter()
-    env = make_play_env(bm, env_cfg or {}, record)
+    env = make_play_env(bm, env_cfg or {}, record, mods)
     check_compatible(model, env)
     model.set_random_seed(seed)
     obs, _ = env.reset(seed=seed)
@@ -122,7 +127,8 @@ def play_map(
         action = model.predict(obs, deterministic=False)[0]
         obs, _, term, trunc, info = env.step(action)
         done = term or trunc
-    return PlayResult(bm, info, final_events(env) if record else [], compute_metrics(env, info), time.perf_counter() - t0)
+    return PlayResult(bm, info, final_events(env) if record else [], compute_metrics(env, info),
+                      time.perf_counter() - t0, env.mods)
 
 
 def compute_metrics(env: ManiaEnv, info: dict[str, Any]) -> dict[str, Any]:
@@ -145,6 +151,8 @@ def compute_metrics(env: ManiaEnv, info: dict[str, Any]) -> dict[str, Any]:
         })
     return {
         "accuracy": float(info["accuracy"]),
+        "score": int(info["score"]),
+        "mods": mods_label(env.mods),
         "counts": counts.tolist(),
         "judgements": dict(zip(JUDGEMENTS, counts.tolist())),
         "total_notes": total,
@@ -201,7 +209,7 @@ def aggregate(results: list[PlayResult]) -> dict[str, Any]:
         "mean_abs_error_ms": float(np.abs(deltas).mean()) if len(deltas) else None,
         "lanes": lanes,
         "maps": [
-            {"title": r.beatmap.name, "md5": r.beatmap.md5, "accuracy": r.metrics["accuracy"],
+            {"title": r.beatmap.name, "md5": r.beatmap.md5, "mods": mods_label(r.mods), "accuracy": r.metrics["accuracy"],
              "misses": r.metrics["misses"], "max_combo": r.metrics["max_combo"]}
             for r in results
         ],
@@ -216,17 +224,23 @@ def evaluate(
     seed: int = 0,
     progress: Callable[[int, int, str], None] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    mods: int | list[int] = 0,
 ) -> dict[str, Any]:
+    """Play every map once. With a list of mod combinations, map i is played with mods[i % len(mods)]."""
     t0 = time.perf_counter()
+    mod_cycle = list(mods) if isinstance(mods, (list, tuple)) else [mods]
+    mod_cycle = mod_cycle or [0]
     results = []
     for i, bm in enumerate(maps):
         if progress:
             progress(i, len(maps), bm.name)
-        results.append(play_map(model, bm, env_cfg, seed=seed + i, should_stop=should_stop))
+        results.append(play_map(model, bm, env_cfg, seed=seed + i, should_stop=should_stop,
+                                mods=mod_cycle[i % len(mod_cycle)]))
     summary = aggregate(results)
     summary["seconds"] = round(time.perf_counter() - t0, 2)
     summary["seed"] = seed
     summary["env_config"] = {**ENV_DEFAULTS, **(env_cfg or {})}
+    summary["mods"] = mod_list_label(mod_cycle)
     return summary
 
 

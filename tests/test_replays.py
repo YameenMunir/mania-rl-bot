@@ -115,7 +115,7 @@ def parse_osr(data: bytes) -> dict:
     frames = lzma.decompress(blob[:5] + bytes([255]) * 8 + blob[13:], format=lzma.FORMAT_ALONE).decode()
     assert declared == len(frames)
     return {"mode": mode, "md5": md5, "player": player, "counts": counts, "score": score,
-            "combo": combo, "frames": [f for f in frames.split(",") if f]}
+            "combo": combo, "mods": mods, "frames": [f for f in frames.split(",") if f]}
 
 
 def test_generate_replay_and_history(store, storage, trained, tmp_path):

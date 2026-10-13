@@ -3,6 +3,7 @@
 Usage:
   python export_replay.py --run runs/demo --maps maps/demo --out replays
   python export_replay.py --run runs/demo --maps "C:/Users/you/AppData/Local/osu!/Songs" --match "Some Song" --tries 5
+  python export_replay.py --run runs/demo --maps maps/demo --mods DT     # osu! plays it back with DT
 
 The beatmap MD5 is written into the replay, so the .osu file you pass in here must be
 byte-identical to the one in your osu! library (point --maps at your Songs folder, or
@@ -19,23 +20,24 @@ from datetime import datetime
 from pathlib import Path
 
 from mania_env import ManiaEnv
+from maniabot.mods import mods_label, parse_mods
 from maniabot.sb3_compat import load_ppo
 from osr_writer import build_osr
 from osu_parser import load_maps
 
 
-def play_once(model, bm, dt_ms: float, jitter_ms: float, seed: int):
-    env = ManiaEnv([bm], dt_ms=dt_ms, clip_seconds=None, jitter_ms=jitter_ms, record=True)
+def play_once(model, bm, dt_ms: float, jitter_ms: float, seed: int, mods: int = 0):
+    env = ManiaEnv([bm], dt_ms=dt_ms, clip_seconds=None, jitter_ms=jitter_ms, record=True, mods=mods)
     obs, _ = env.reset(seed=seed)
     done, info = False, {}
     while not done:
         action = model.predict(obs, deterministic=False)[0]  # sampled, like training
         obs, _, term, trunc, info = env.step(action)
         done = term or trunc
-    events = list(env.events)
+    events = list(env.events)  # song time
     for lane in range(env.KEYS):  # release anything still held at the end
         if env.keys_down[lane]:
-            events.append((env.t, lane, 0))
+            events.append((env.t * env.rate, lane, 0))
     return info, events
 
 
@@ -54,7 +56,12 @@ def main() -> None:
     ap.add_argument("--tries", type=int, default=1, help="play each map this many times and keep the best")
     ap.add_argument("--jitter-ms", type=float, default=None, help="override the training-time timing noise")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--mods", default="NM", help="play with these mods, e.g. DT, HR or DTHR (stored in the replay)")
     args = ap.parse_args()
+    try:
+        mods = parse_mods(args.mods)
+    except ValueError as exc:
+        ap.error(str(exc))
 
     run = Path(args.run)
     cfg = {"dt_ms": 10.0, "jitter_ms": 0.0}
@@ -76,7 +83,7 @@ def main() -> None:
     for bm in maps:
         best = None
         for k in range(args.tries):
-            info, events = play_once(model, bm, cfg["dt_ms"], jitter, args.seed + k)
+            info, events = play_once(model, bm, cfg["dt_ms"], jitter, args.seed + k, mods)
             if best is None or info["accuracy"] > best[0]["accuracy"]:
                 best = (info, events)
         info, events = best
@@ -84,14 +91,16 @@ def main() -> None:
             beatmap_md5=bm.md5,
             player=args.player,
             counts=info["counts"],
-            score=int(info["accuracy"] * 1_000_000),
+            score=int(info["score"]),
             max_combo=info["max_combo"],
             events=events,
+            mods=mods,
         )
         stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        fname = safe(f"{args.player} - {bm.artist} - {bm.title} [{bm.version}] ({stamp}) Mania.osr")
+        tag = f" +{mods_label(mods)}" if mods else ""
+        fname = safe(f"{args.player} - {bm.artist} - {bm.title} [{bm.version}]{tag} ({stamp}) Mania.osr")
         (out / fname).write_bytes(data)
-        print(f"{info['accuracy'] * 100:6.2f}%  combo {info['max_combo']:4d}  {out / fname}")
+        print(f"{info['accuracy'] * 100:6.2f}%  score {info['score']:9,d}  combo {info['max_combo']:4d}  {out / fname}")
         time.sleep(1.0)  # keep timestamps in file names unique
 
 

@@ -15,6 +15,7 @@ from maniabot import osu_integration
 from maniabot.evaluation import POLICIES, PlayResult, check_compatible, compute_metrics, final_events, make_play_env
 from maniabot.logs import event
 from maniabot.models import IN_USE
+from maniabot.mods import mods_label
 from maniabot.ranks import RANK_COLOURS, mania_rank
 from maniabot.replays import write_replay
 from maniabot.ui import theme
@@ -36,12 +37,14 @@ class WatchWindow(tk.Toplevel):
     HIT_Y_FROM_BOTTOM = 110
     SCROLL = 0.9  # px per ms
 
-    def __init__(self, parent, ctx, model_id: str, version: str, check, speed: float = 1.0):
+    def __init__(self, parent, ctx, model_id: str, version: str, check, speed: float = 1.0, mods: int = 0):
         super().__init__(parent)
         self.ctx, self.model_id, self.version, self.check = ctx, model_id, version, check
         self.bm = check.beatmap
         self.speed = speed
-        self.title(f"Watch Bot Play — {self.bm.name}")
+        self.mods = mods
+        self.mods_text = f" +{mods_label(mods)}" if mods else ""
+        self.title(f"Watch Bot Play — {self.bm.name}{self.mods_text}")
         self.configure(bg=theme.BG)
         k = theme.SCALE
         self.LANE_W, self.HIT_Y_FROM_BOTTOM, self.SCROLL = int(78 * k), int(110 * k), 0.9 * k
@@ -55,7 +58,8 @@ class WatchWindow(tk.Toplevel):
         head.grid(row=0, column=0, sticky="ew")
         head.columnconfigure(0, weight=1)
         rec = ctx.store.get_model(model_id)
-        ttk.Label(head, text=f"{rec.name} {version}  ·  {self.bm.artist} - {self.bm.title} [{self.bm.version}]",
+        ttk.Label(head, text=f"{rec.name} {version}  ·  {self.bm.artist} - {self.bm.title} [{self.bm.version}]"
+                             f"{self.mods_text}",
                   style="H2.TLabel").grid(row=0, column=0, sticky="w")
         self.status = ttk.Label(head, text="Loading model…", style="Muted.TLabel")
         self.status.grid(row=1, column=0, sticky="w")
@@ -95,7 +99,7 @@ class WatchWindow(tk.Toplevel):
         def work():
             v = self.ctx.store.get_version(self.model_id, self.version)
             model = POLICIES.load(v.weights)
-            env = make_play_env(self.bm, v.meta.get("env_config"), record=True)
+            env = make_play_env(self.bm, v.meta.get("env_config"), record=True, mods=self.mods)
             check_compatible(model, env)
             return model, env
 
@@ -120,7 +124,8 @@ class WatchWindow(tk.Toplevel):
         self.t0 = self.env.t
         self.last_counts = self.env.counts.copy()
         self.running = True
-        event(log, "watch.started", model=self.model_id, version=self.version, map=self.bm.name)
+        event(log, "watch.started", model=self.model_id, version=self.version, map=self.bm.name,
+              mods=mods_label(self.mods))
         self._tick()
 
     # ---------------------------------------------------------- playing
@@ -197,11 +202,14 @@ class WatchWindow(tk.Toplevel):
                       font=(theme.FAMILY, 22, "bold"))
         c.create_text(theme.px(16), theme.px(58), anchor="nw", text=counts, fill=theme.MUTED,
                       font=theme.fonts()["small"])
+        c.create_text(w - theme.px(16), theme.px(12), anchor="ne", text=f"{env.scorer.value:07,d}", fill=theme.TEXT,
+                      font=(theme.FAMILY, 22, "bold"))
         if self.rank:
             cx, cy = w / 2, h * 0.24
             c.create_text(cx, cy - theme.px(62), text="RANK", fill=theme.MUTED, font=(theme.FAMILY, 12, "bold"))
             c.create_text(cx, cy, text=self.rank, fill=RANK_COLOURS[self.rank], font=(theme.FAMILY, 72, "bold"))
-            c.create_text(cx, cy + theme.px(62), text=f"{self._acc() * 100:.2f}% accuracy", fill=theme.TEXT,
+            c.create_text(cx, cy + theme.px(62), text=f"{self._acc() * 100:.2f}% accuracy  ·  "
+                                                      f"score {env.scorer.value:,}", fill=theme.TEXT,
                           font=(theme.FAMILY, 13))
             c.create_text(cx, cy + theme.px(88), text="simulator rank; osu! may differ slightly", fill=theme.FAINT,
                           font=theme.fonts()["small"])
@@ -223,7 +231,8 @@ class WatchWindow(tk.Toplevel):
         counts = self.info.get("counts")
         self.rank = None if self.stopped_early else mania_rank(acc, counts)
         shown = f"Rank {self.rank}  ·  " if self.rank else ""
-        self.status.configure(text=f"Finished  ·  {shown}accuracy {fmt_pct(acc)} (simulator)  ·  "
+        self.status.configure(text=f"Finished  ·  {shown}accuracy {fmt_pct(acc)}  ·  score {self.info.get('score', 0):,} "
+                                   f"(simulator)  ·  "
                                    f"max combo {self.info.get('max_combo')}  ·  {(counts or [0] * 6)[5]} misses")
         self._release()
         event(log, "watch.finished", model=self.model_id, version=self.version, acc=acc, rank=self.rank)
@@ -243,7 +252,8 @@ class WatchWindow(tk.Toplevel):
                                    "(unplayed notes count as misses)")
 
     def _result(self) -> PlayResult:
-        return PlayResult(self.bm, self.info, final_events(self.env), compute_metrics(self.env, self.info))
+        return PlayResult(self.bm, self.info, final_events(self.env), compute_metrics(self.env, self.info),
+                          mods=self.env.mods)
 
     def save_replay(self) -> dict | None:
         if self.saved:

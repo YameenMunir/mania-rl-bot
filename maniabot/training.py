@@ -27,6 +27,7 @@ from typing import Any, Callable
 from maniabot.beatmaps import default_val_count, map_summary, scan_maps, split_maps, star_range_label
 from maniabot.logs import event, setup_logging
 from maniabot.models import IN_USE, InvalidCheckpoint, ModelError, ModelStore, now_iso, verify_weights
+from maniabot.mods import mod_list_label, mods_label, parse_mod_list
 from maniabot.storage import Storage
 
 log = logging.getLogger("maniabot.training")
@@ -60,6 +61,7 @@ class TrainingSpec:
     dt_ms: float = 10.0
     clip_seconds: float = 20.0
     jitter_ms: float = 0.0
+    mods: list[str] = field(default_factory=lambda: ["NM"])  # mod combinations to practise, one picked per play
     checkpoint_every: int = 100_000
     device: str = "auto"
     seed: int = 0
@@ -70,6 +72,10 @@ class TrainingSpec:
     @property
     def env_config(self) -> dict[str, float]:
         return {"dt_ms": float(self.dt_ms), "clip_seconds": float(self.clip_seconds), "jitter_ms": float(self.jitter_ms)}
+
+    @property
+    def mod_bits(self) -> list[int]:
+        return parse_mod_list(self.mods)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -130,6 +136,10 @@ def validate_spec(spec: TrainingSpec) -> list[str]:
         errors.append("Timing noise can't be negative.")
     if spec.checkpoint_every < 1000:
         errors.append("Checkpoint frequency must be at least 1,000 timesteps.")
+    try:
+        spec.mod_bits
+    except ValueError as exc:
+        errors.append(f"Mods: {exc}")
     if not spec.maps_folder or not Path(spec.maps_folder).exists():
         errors.append("Choose a beatmap folder that exists.")
     for label, v in (("Minimum", spec.min_stars), ("Maximum", spec.max_stars)):
@@ -168,6 +178,13 @@ def compatibility_warnings(source_meta: dict[str, Any], spec: TrainingSpec) -> l
         warn.append("Batch size is larger than one rollout (rollout length x parallel games); it will be capped.")
     elif (spec.n_steps * spec.n_envs) % spec.batch_size:
         warn.append("Rollout length x parallel games isn't a multiple of the batch size; the last mini-batch will be smaller.")
+    try:
+        old_mods, new_mods = parse_mod_list(source_meta.get("mods") or ["NM"]), spec.mod_bits
+    except ValueError:
+        old_mods = new_mods = []
+    if set(old_mods) != set(new_mods):
+        warn.append(f"Mods change from {mod_list_label(old_mods)} to {mod_list_label(new_mods)}. Validation runs with the "
+                    "new mods, so scores won't be directly comparable with earlier versions.")
     old_maps = source_meta.get("maps_folder")
     if old_maps and spec.maps_folder and Path(old_maps).resolve() != Path(spec.maps_folder).resolve():
         warn.append("Training on a different beatmap folder than the previous version.")
@@ -338,7 +355,8 @@ def run_training(
         from mania_env import ManiaEnv
         from maniabot.sb3_compat import load_ppo
 
-        env_kwargs = dict(dt_ms=spec.dt_ms, clip_seconds=spec.clip_seconds, jitter_ms=spec.jitter_ms)
+        env_kwargs = dict(dt_ms=spec.dt_ms, clip_seconds=spec.clip_seconds, jitter_ms=spec.jitter_ms, mods=spec.mod_bits)
+        session["mods"] = mod_list_label(spec.mod_bits)
 
         def make_env():
             return ManiaEnv(train_maps, **env_kwargs)
@@ -540,7 +558,8 @@ def _make_callback(store, spec, session, model, val_maps, emit, control, t_start
                      "created_at": now_iso(), "val_accuracy": None}
             if validate and val_maps:
                 emit({"type": "status", "status": "validating", "message": "Validating checkpoint…"})
-                res = evaluate(self.model, val_maps[:VAL_MAPS_PER_CHECKPOINT], spec.env_config, seed=12345)
+                res = evaluate(self.model, val_maps[:VAL_MAPS_PER_CHECKPOINT], spec.env_config, seed=12345,
+                               mods=spec.mod_bits)
                 entry["val_accuracy"] = res["accuracy"]
                 if res["accuracy"] > self.best_val:
                     self.best_val = res["accuracy"]
@@ -600,7 +619,7 @@ def _save_version(store, spec, session, model, val_maps, heldout, source_desc, s
     validation = None
     if val_maps:
         try:
-            validation = strip_private(evaluate(model, val_maps, spec.env_config, seed=12345))
+            validation = strip_private(evaluate(model, val_maps, spec.env_config, seed=12345, mods=spec.mod_bits))
             validation["heldout"] = heldout
             validation["maps_used"] = [m.name for m in val_maps]
         except Exception:  # noqa: BLE001 - validation failure must not lose the trained weights
@@ -631,6 +650,7 @@ def _save_version(store, spec, session, model, val_maps, heldout, source_desc, s
         "hyperparameters": hp,
         "device": device,
         "env_config": spec.env_config,
+        "mods": [mods_label(m) for m in spec.mod_bits],
         "architecture": {"algorithm": "PPO", "policy": "MlpPolicy", "net_arch": net_arch, "n_upcoming": 4,
                          "lookahead_ms": 1000.0},
         "maps_folder": str(Path(spec.maps_folder).resolve()),

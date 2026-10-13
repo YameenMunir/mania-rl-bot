@@ -11,6 +11,7 @@ from maniabot.beatmaps import scan_maps
 from maniabot.evaluation import POLICIES, compare, evaluate, strip_private
 from maniabot.legacy import read_sb3_data
 from maniabot.models import DeletionPlan, ModelError, now_iso
+from maniabot.mods import CHOICES as MOD_CHOICES, mods_label, parse_mods
 from maniabot.storage import dir_size, human_size
 from maniabot.ui import theme
 from maniabot.ui.pages.base import MapsFolderField, Page, version_label
@@ -725,6 +726,7 @@ class VersionDetails(Dialog):
             ("Parallel games", fmt_int(hp.get("n_envs"))),
             ("Network", "x".join(map(str, (m.get("architecture") or {}).get("net_arch") or [])) or "—"),
             ("Decision tick / noise", f"{env.get('dt_ms', '—')} ms / {env.get('jitter_ms', '—')} ms"),
+            ("Mods", ", ".join(m.get("mods") or ["NM"])),
             ("Training maps", f"{len(m.get('training_maps') or [])} from {Path(m.get('maps_folder') or '—').name}"),
             ("Validation", f"{fmt_pct(val.get('accuracy'))} on {val.get('n_maps', len(m.get('validation_maps') or []))} "
                            f"{'held-out' if val.get('heldout') else 'training'} map(s)" if val else "not validated"),
@@ -778,6 +780,9 @@ class EvaluateDialog(Dialog):
         self.limit = tk.StringVar(value="12")
         ttk.Spinbox(lim, from_=1, to=500, textvariable=self.limit, width=6).pack(side="left", padx=6)
         ttk.Label(lim, text="maps", style="Card.TLabel").pack(side="left")
+        ttk.Label(lim, text="with mods", style="Card.TLabel").pack(side="left", padx=(16, 0))
+        self.mods = tk.StringVar(value="NM")
+        ttk.Combobox(lim, textvariable=self.mods, values=MOD_CHOICES, state="readonly", width=8).pack(side="left", padx=6)
         self.status = ttk.Label(self.body, text="", style="CardMuted.TLabel", wraplength=560)
         self.status.grid(row=4, column=0, sticky="w", pady=(10, 0))
         self.prog = ttk.Progressbar(self.body, maximum=1.0)
@@ -802,6 +807,7 @@ class EvaluateDialog(Dialog):
         self._buttons["Run evaluation"].state(["disabled"])
         self.prog.grid(row=5, column=0, sticky="ew", pady=(6, 0))
         total = len(self.targets)
+        mods = parse_mods(self.mods.get())
 
         def progress(i, n, name, k):
             frac = (k + i / max(1, n)) / total
@@ -819,7 +825,7 @@ class EvaluateDialog(Dialog):
                 model = POLICIES.load(v.weights)
                 res = strip_private(evaluate(model, maps, v.meta.get("env_config"), seed=777,
                                              progress=lambda i, n, name, k=k: progress(i, n, name, k),
-                                             should_stop=lambda: self._stop))
+                                             should_stop=lambda: self._stop, mods=mods))
                 res.update({"kind": "evaluation", "maps_folder": folder})
                 self.ctx.store.save_evaluation(mid, ver, res)
                 out.append(res)
@@ -830,7 +836,8 @@ class EvaluateDialog(Dialog):
                 return
             self.results = results
             self.prog.configure(value=1.0)
-            txt = "\n".join(f"{self.ctx.store.get_model(m).name} {v}: accuracy {fmt_pct(r['accuracy'])}, "
+            with_mods = f" +{mods_label(mods)}" if mods else ""
+            txt = "\n".join(f"{self.ctx.store.get_model(m).name} {v}{with_mods}: accuracy {fmt_pct(r['accuracy'])}, "
                             f"{r['misses']} misses, {r['extra_presses']} extra presses on {r['n_maps']} map(s)"
                             for (m, v), r in zip(self.targets, results))
             self.status.configure(text=f"✓ Done. Results saved.\n{txt}", style="CardGood.TLabel")

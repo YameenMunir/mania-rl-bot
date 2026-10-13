@@ -8,13 +8,20 @@ Observation (per lane, flattened):
   n_upcoming coarse times-to-hit (sqrt-scaled so precision is highest near 0),
   n_upcoming "is hold note" flags, key_down, holding, hold_remaining.
 
+Mods (maniabot.mods): DT / NC / HT change the song speed and EZ / HR the hit windows. The
+env runs in real time, so with DT the note times are divided by 1.5 and the agent simply sees
+denser notes (mania keeps the windows the same size in real time). `mods` is one bit mask, or
+a list to pick from at random every episode; reset(options={"mods": ...}) overrides it.
+
 With record=True the env logs every key press/release as (time_ms, lane, down) in
-`env.events`, using the same (possibly jittered) timestamps the judging used. That
-log is what export_replay.py turns into an osu! .osr replay.
+`env.events`, using the same (possibly jittered) timestamps the judging used, converted to
+song time (what an .osr replay stores). That log is what export_replay.py turns into an
+osu! .osr replay.
 
 For evaluation the env also keeps `hit_log` ((lane, delta_ms, judgement_index) for every
 judged press, negative delta = early), `lane_counts` (per-lane judgement counts),
 `lane_strays` (presses that hit no note) and `holds_total` (hold notes in the clip).
+`scorer` keeps the osu!mania ScoreV1 score (maniabot.scoring) as the play goes.
 """
 from __future__ import annotations
 
@@ -22,6 +29,8 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
+from maniabot.mods import check_mods, mods_label, speed, window_scale
+from maniabot.scoring import ScoreV1
 from osu_parser import Beatmap
 
 JUDGEMENTS = ("MAX", "300", "200", "100", "50", "miss")
@@ -46,6 +55,7 @@ class ManiaEnv(gym.Env):
         jitter_ms: float = 0.0,
         stray_penalty: float = 0.02,
         record: bool = False,
+        mods: int | list[int] = 0,
     ):
         super().__init__()
         if not beatmaps:
@@ -61,6 +71,8 @@ class ManiaEnv(gym.Env):
         self.stray_penalty = float(stray_penalty)
         self.record = bool(record)
         self.events: list[tuple[float, int, int]] = []
+        self.mod_choices = [check_mods(m) for m in (mods if isinstance(mods, (list, tuple)) else [mods])] or [0]
+        self.mods, self.rate = 0, 1.0
 
         self.n_features = 2 * self.n_up + 3
         self.observation_space = spaces.Box(-1.0, 1.0, shape=(self.KEYS * self.n_features,), dtype=np.float32)
@@ -68,9 +80,10 @@ class ManiaEnv(gym.Env):
 
     # ------------------------------------------------------------------ setup
     def _pick_clip(self, bm: Beatmap):
-        notes = bm.notes
-        first = notes[0].time
-        last = max(n.end_time for n in notes)
+        """(start, end, notes) of the part to play; start and end are in real time."""
+        notes, r = bm.notes, self.rate
+        first = notes[0].time / r
+        last = max(n.end_time for n in notes) / r
         if self.clip_ms is None:
             return first - 2000.0, last + 1000.0, list(notes)
         lo = first - 1000.0
@@ -78,11 +91,11 @@ class ManiaEnv(gym.Env):
         for _ in range(20):
             start = float(self.np_random.uniform(lo, hi))
             end = start + self.clip_ms
-            sel = [n for n in notes if start + 500.0 <= n.time and n.end_time <= end]
+            sel = [n for n in notes if start + 500.0 <= n.time / r and n.end_time / r <= end]
             if len(sel) >= 10:
                 return start, end, sel
         end = first + self.clip_ms
-        sel = [n for n in notes if n.end_time <= end] or list(notes[:10])
+        sel = [n for n in notes if n.end_time / r <= end] or list(notes[:10])
         return first - 2000.0, end, sel
 
     def reset(self, *, seed=None, options=None):
@@ -92,17 +105,25 @@ class ManiaEnv(gym.Env):
         if idx is None:
             idx = int(self.np_random.integers(len(self.beatmaps)))
         self.beatmap = self.beatmaps[idx]
-        self.windows = hit_windows(self.beatmap.od)
+        if options.get("mods") is not None:
+            self.mods = check_mods(options["mods"])
+        elif len(self.mod_choices) == 1:
+            self.mods = self.mod_choices[0]
+        else:
+            self.mods = self.mod_choices[int(self.np_random.integers(len(self.mod_choices)))]
+        self.rate = speed(self.mods)
+        self.windows = hit_windows(self.beatmap.od) * window_scale(self.mods)
 
         start, end, sel = self._pick_clip(self.beatmap)
         self.times, self.ends, self.is_hold = [], [], []
-        for lane in range(self.KEYS):
+        for lane in range(self.KEYS):  # in real time from here on
             ln = [n for n in sel if n.lane == lane]
-            self.times.append(np.array([n.time for n in ln], dtype=np.float64))
-            self.ends.append(np.array([n.end_time for n in ln], dtype=np.float64))
+            self.times.append(np.array([n.time / self.rate for n in ln], dtype=np.float64))
+            self.ends.append(np.array([n.end_time / self.rate for n in ln], dtype=np.float64))
             self.is_hold.append(np.array([n.is_hold for n in ln], dtype=bool))
         self.total = len(sel)
         self.holds_total = sum(1 for n in sel if n.is_hold)
+        self.scorer = ScoreV1(self.total, self.mods)
 
         self.t = float(start)
         self.ptr = [0] * self.KEYS
@@ -149,6 +170,7 @@ class ManiaEnv(gym.Env):
             j = 5  # inside the miss window: counts as a miss and eats the note
         self.counts[j] += 1
         self.lane_counts[lane, j] += 1
+        self.scorer.add(j)
         self.hit_log.append((lane, float(delta), j))
         self.ptr[lane] += 1
         if j == 5:
@@ -180,6 +202,7 @@ class ManiaEnv(gym.Env):
             while ptr < len(times) and self.t > times[ptr] + w5:
                 self.counts[5] += 1
                 self.lane_counts[lane, 5] += 1
+                self.scorer.add(5)
                 self.combo = 0
                 r -= 1.0
                 ptr += 1
@@ -200,7 +223,7 @@ class ManiaEnv(gym.Env):
             if down != was:
                 now = self._now()
                 if self.record:
-                    self.events.append((now, lane, down))
+                    self.events.append((now * self.rate, lane, down))
                 reward += self._press(lane, now) if down else self._release(lane, now)
             self.keys_down[lane] = down
         self.t += self.dt
@@ -218,8 +241,10 @@ class ManiaEnv(gym.Env):
         acc = float((counts * ACC_WEIGHT).sum() / (300.0 * max(1, self.total)))
         return {
             "accuracy": acc,
+            "score": self.scorer.value,
             "counts": counts.tolist(),
             "map": self.beatmap.name,
+            "mods": mods_label(self.mods),
             "total_notes": self.total,
             "broken_holds": self.broken,
             "stray_presses": self.strays,

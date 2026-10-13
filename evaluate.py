@@ -4,6 +4,7 @@ Usage:
   python evaluate.py --run runs/demo --maps maps/demo
   python evaluate.py --baseline --maps maps/demo          # sanity check of the simulator
   python evaluate.py --baseline --jitter-ms 8 --maps maps/demo   # ceiling with human-like noise
+  python evaluate.py --run runs/demo --maps maps/demo --mods DT
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from mania_env import ACC_WEIGHT, JUDGEMENTS, ManiaEnv
+from maniabot.mods import parse_mods
 from osu_parser import load_maps
 
 
@@ -40,9 +42,14 @@ def main() -> None:
     ap.add_argument("--baseline", action="store_true")
     ap.add_argument("--jitter-ms", type=float, default=None)
     ap.add_argument("--dt-ms", type=float, default=None)
+    ap.add_argument("--mods", default="NM", help="play with these mods, e.g. DT, HR or DTHR")
     args = ap.parse_args()
     if not args.run and not args.baseline:
         ap.error("pass --run <folder> or --baseline")
+    try:
+        mods = parse_mods(args.mods)
+    except ValueError as exc:
+        ap.error(str(exc))
 
     cfg = {"dt_ms": 10.0, "jitter_ms": 0.0}
     model = None
@@ -57,7 +64,7 @@ def main() -> None:
         cfg["dt_ms"] = args.dt_ms
 
     maps = load_maps(args.maps)
-    env = ManiaEnv(maps, dt_ms=cfg["dt_ms"], clip_seconds=None, jitter_ms=cfg["jitter_ms"])
+    env = ManiaEnv(maps, dt_ms=cfg["dt_ms"], clip_seconds=None, jitter_ms=cfg["jitter_ms"], mods=mods)
 
     totals = np.zeros(6, dtype=np.int64)
     accs = []

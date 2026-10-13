@@ -3,6 +3,7 @@
 Usage:
   python train.py --maps maps/demo --timesteps 300000 --out runs/demo
   python train.py --maps maps/real --jitter-ms 8 --out runs/human_like
+  python train.py --maps maps/demo --mods "NM, DT, HR" --out runs/mods   # each play picks one at random
 
 Every finished play (episode) is appended to <out>/episodes.csv, so you can watch the
 agent get better with each play. A learning_curve.png is written at the end.
@@ -21,6 +22,7 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
 from mania_env import ManiaEnv
+from maniabot.mods import mods_label, parse_mod_list
 from osu_parser import load_maps
 
 
@@ -93,6 +95,7 @@ def main() -> None:
     ap.add_argument("--dt-ms", type=float, default=10.0)
     ap.add_argument("--clip-seconds", type=float, default=20.0)
     ap.add_argument("--jitter-ms", type=float, default=0.0, help="Gaussian press-timing noise (human-like limit)")
+    ap.add_argument("--mods", default="NM", help='mod combinations to practise, e.g. "NM, DT, DTHR" (one per play)')
     ap.add_argument("--out", default="runs/demo")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--resume", default=None, help="path to a model .zip to continue training")
@@ -103,11 +106,16 @@ def main() -> None:
     maps = load_maps(args.maps)
     print(f"loaded {len(maps)} 4K maps from {args.maps}")
 
+    try:
+        mods = parse_mod_list(args.mods)
+    except ValueError as exc:
+        ap.error(str(exc))
     env_kwargs = dict(dt_ms=args.dt_ms, clip_seconds=args.clip_seconds, jitter_ms=args.jitter_ms)
-    (out / "config.json").write_text(json.dumps({**env_kwargs, "maps": args.maps}, indent=2))
+    (out / "config.json").write_text(json.dumps(
+        {**env_kwargs, "maps": args.maps, "mods": [mods_label(m) for m in mods]}, indent=2))
 
     def make_env():
-        return ManiaEnv(maps, **env_kwargs)
+        return ManiaEnv(maps, mods=mods, **env_kwargs)
 
     vec_cls = SubprocVecEnv if args.n_envs > 1 else DummyVecEnv
     env = make_vec_env(make_env, n_envs=args.n_envs, seed=args.seed, vec_env_cls=vec_cls)
