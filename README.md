@@ -40,7 +40,7 @@ The memory and disk figures were measured on one machine with the default settin
 | **Models → Continue Training** | Resume from the active, best or latest version, any older version, or a checkpoint. Weights, optimiser state, step counter and learning-rate schedule are restored. Change the maps or **star range** for the new session. Warns when a changed setting could hurt |
 | **Training** | Live progress, losses, recent accuracy, checkpoints, ETA; pause, save checkpoint now, stop & save, cancel |
 | **Test Model** | Pick model, version and a 4K map (a `.osu` file, an `.osz` / `.zip` to choose one of its difficulties, or browse a whole folder filtered by **star range**, with each map tagged trained on / held-out / new), then **Watch Bot Play** (the model plays live in a 4K playfield, then save the play and open it in osu!) or **Generate Replay** (no watching; writes an `.osr`) |
-| **Replays** | Replay history with metrics; open in osu!, show in folder, copy path, generate again, delete. Entries survive deleting the model |
+| **Replays** | Replay history with accuracy and rank; open in osu!, show in folder, copy path, generate again, delete. Entries survive deleting the model |
 | **Settings** | Storage location (change it with a safe copy), storage usage, osu! stable folder, defaults, import old CLI runs, logs |
 
 ### Versions are never overwritten
@@ -199,6 +199,27 @@ Ratings are the real osu!mania star ratings, computed with
 estimate is used instead and the form says how many ratings are estimates. Ratings are cached by map
 checksum next to the unpacked mapsets, so rescanning a big folder stays quick. Each version records the
 range it was trained on, and the star rating of every map it used.
+
+### Ranks
+
+When a **Watch Bot Play** run finishes, the playfield shows the rank the bot earned (**SS**, **S**, **A**,
+**B**, **C** or **D**) and the status line reads "Finished · Rank S · accuracy …". **Generate Replay** shows
+the rank in its result card, and the **Replays** list has a Rank column. Ranks follow osu!mania's accuracy
+cut-offs:
+
+| Rank | Accuracy |
+|---|---|
+| SS | 100% (every note MAX or 300) |
+| S | over 95% |
+| A | over 90% |
+| B | over 80% |
+| C | over 70% |
+| D | 70% or below |
+
+A play you stop early gets no rank. The rank is the simulator's: osu! re-judges the replay with its own
+rules, so when you open the replay in osu! stable, the results screen there is osu!'s own and can differ
+slightly (mostly on 50/100 edges and hold-note releases). The replay file carries the simulator's
+judgement counts, which osu! shows in the replay's score header.
 
 ### Browsing maps in Test Model
 

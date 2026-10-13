@@ -15,6 +15,7 @@ from maniabot import osu_integration
 from maniabot.evaluation import POLICIES, PlayResult, check_compatible, compute_metrics, final_events, make_play_env
 from maniabot.logs import event
 from maniabot.models import IN_USE
+from maniabot.ranks import RANK_COLOURS, mania_rank
 from maniabot.replays import write_replay
 from maniabot.ui import theme
 from maniabot.ui.widgets import error, fmt_pct, message
@@ -72,6 +73,8 @@ class WatchWindow(tk.Toplevel):
 
         self.running = False
         self.finished = False
+        self.stopped_early = False
+        self.rank: str | None = None  # set when a full play finishes
         self.saved: dict | None = None
         self.token = IN_USE.acquire(model_id, version, "watching a live test")
         self.last_counts = None
@@ -194,6 +197,14 @@ class WatchWindow(tk.Toplevel):
                       font=(theme.FAMILY, 22, "bold"))
         c.create_text(theme.px(16), theme.px(58), anchor="nw", text=counts, fill=theme.MUTED,
                       font=theme.fonts()["small"])
+        if self.rank:
+            cx, cy = w / 2, h * 0.24
+            c.create_text(cx, cy - theme.px(62), text="RANK", fill=theme.MUTED, font=(theme.FAMILY, 12, "bold"))
+            c.create_text(cx, cy, text=self.rank, fill=RANK_COLOURS[self.rank], font=(theme.FAMILY, 72, "bold"))
+            c.create_text(cx, cy + theme.px(62), text=f"{self._acc() * 100:.2f}% accuracy", fill=theme.TEXT,
+                          font=(theme.FAMILY, 13))
+            c.create_text(cx, cy + theme.px(88), text="simulator rank; osu! may differ slightly", fill=theme.FAINT,
+                          font=theme.fonts()["small"])
         last = max((e[-1] for e in env.ends if len(e)), default=1.0)
         first = min((x[0] for x in env.times if len(x)), default=0.0)
         frac = min(1.0, max(0.0, (t - first) / max(1.0, last - first)))
@@ -209,16 +220,22 @@ class WatchWindow(tk.Toplevel):
         self.btn_save.pack(side="left")
         self.btn_osu.pack(side="left", padx=6)
         acc = self.info.get("accuracy")
-        self.status.configure(text=f"Finished  ·  accuracy {fmt_pct(acc)} (simulator)  ·  max combo {self.info.get('max_combo')}"
-                                   f"  ·  {self.info.get('counts', [0] * 6)[5]} misses")
+        counts = self.info.get("counts")
+        self.rank = None if self.stopped_early else mania_rank(acc, counts)
+        shown = f"Rank {self.rank}  ·  " if self.rank else ""
+        self.status.configure(text=f"Finished  ·  {shown}accuracy {fmt_pct(acc)} (simulator)  ·  "
+                                   f"max combo {self.info.get('max_combo')}  ·  {(counts or [0] * 6)[5]} misses")
         self._release()
-        event(log, "watch.finished", model=self.model_id, version=self.version, acc=acc)
+        event(log, "watch.finished", model=self.model_id, version=self.version, acc=acc, rank=self.rank)
+        if self.winfo_exists():
+            self._draw()  # show the rank on the final frame
 
     def stop(self) -> None:
         """Stop early: the partial play is judged up to this point and can still be saved."""
         if not self.running:
             return
         self.running = False
+        self.stopped_early = True  # a partial play gets no rank
         self.info = self.env._final_info()
         self.status.configure(text="Stopped.")
         self._finish()

@@ -8,6 +8,7 @@ from tkinter import filedialog, ttk
 from maniabot import osu_integration
 from maniabot.beatmaps import check_beatmap, extract_osz
 from maniabot.models import ModelError
+from maniabot.ranks import mania_rank
 from maniabot.replays import generate_replay
 from maniabot.ui import theme
 from maniabot.ui.pages.base import Page, version_label
@@ -112,7 +113,7 @@ class TestModelPage(Page):
         self.result = Card(self.main, "Replay ready")
         self.res_kv = KeyValueGrid(self.result.body, columns=3)
         self.res_kv.grid(row=0, column=0, sticky="ew")
-        for k, l in (("acc", "Accuracy (simulator)"), ("judg", "MAX / 300 / 200 / 100 / 50 / miss"), ("combo", "Max combo"),
+        for k, l in (("acc", "Accuracy (simulator)"), ("rank", "Rank"), ("judg", "MAX / 300 / 200 / 100 / 50 / miss"), ("combo", "Max combo"),
                      ("extra", "Extra presses"), ("holds", "Hold notes completed"), ("offset", "Mean offset / deviation"),
                      ("time", "Processing time"), ("model", "Model"), ("lanes", "Lane accuracy")):
             self.res_kv.add(k, l)
@@ -369,6 +370,7 @@ class TestModelPage(Page):
         self.gen_status.configure(text="✓ Replay saved.", style="CardGood.TLabel")
         m = rec["metrics"]
         self.res_kv.set("acc", fmt_pct(m["accuracy"]))
+        self.res_kv.set("rank", mania_rank(m["accuracy"], m["counts"]) or "—")
         self.res_kv.set("judg", " / ".join(str(c) for c in m["counts"]))
         self.res_kv.set("combo", f"{m['max_combo']:,}")
         self.res_kv.set("extra", f"{m['extra_presses']:,}")

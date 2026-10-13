@@ -7,6 +7,7 @@ from tkinter import filedialog, ttk
 
 from maniabot import osu_integration
 from maniabot.models import DeletionPlan
+from maniabot.ranks import mania_rank
 from maniabot.replays import generate_replay, model_status
 from maniabot.ui.pages.base import Page
 from maniabot.ui.widgets import (
@@ -36,7 +37,7 @@ class ReplaysPage(Page):
         self.card.grid(row=1, column=0, sticky="nsew")
         self.table = Table(self.card.body, [
             ("date", "Generated", 130), ("map", "Beatmap", 230), ("diff", "Difficulty", 130), ("model", "Model", 200),
-            ("acc", "Accuracy", 75), ("miss", "Misses", 60), ("time", "Processing", 75), ("kind", "Type", 70),
+            ("acc", "Accuracy", 75), ("rank", "Rank", 50), ("miss", "Misses", 60), ("time", "Processing", 75), ("kind", "Type", 70),
             ("file", "File", 70)], height=16, selectmode="extended")
         self.table.grid(row=0, column=0, sticky="nsew")
         self.table.on_double(self._details)
@@ -80,7 +81,8 @@ class ReplaysPage(Page):
             model = f"{r.get('model_name') or '—'} {r.get('version') or ''}".strip() + (f"  ({st})" if st else "")
             self.table.insert(r["id"], [
                 fmt_date(r.get("created_at")), f"{bm.get('artist', '')} - {bm.get('title', '')}".strip(" -"),
-                bm.get("version", ""), model, fmt_pct(m.get("accuracy")), m.get("misses", "—"),
+                bm.get("version", ""), model, fmt_pct(m.get("accuracy")),
+                mania_rank(m.get("accuracy"), m.get("counts")) or "—", m.get("misses", "—"),
                 f"{r['processing_s']:.1f}s" if r.get("processing_s") is not None else "—", r.get("kind", ""),
                 "ok" if r["exists"] else "missing"], tags=("muted",) if not r["exists"] else ())
         self.count_lbl.configure(text=f"{len(recs)} replay(s)")
@@ -134,6 +136,7 @@ class ReplaysPage(Page):
                 ("Generated", fmt_date(r.get("created_at"))), ("Type", r.get("kind")),
                 ("Attempts", r.get("tries", "—")), ("Player", r.get("player", "—")),
                 ("Notes / holds", f"{bm.get('notes', '—')} / {bm.get('holds', '—')}"), ("OD", bm.get("od", "—"))]
+        rows.append(("Rank", mania_rank(m.get("accuracy"), m.get("counts")) or "—"))
         for key in ("accuracy", "misses", "extra_presses", "hold_accuracy", "mean_offset_ms", "timing_std_ms", "max_combo"):
             rows.append((key.replace("_", " ").capitalize(), fmt_value(key, m.get(key))))
         if m.get("lanes"):
