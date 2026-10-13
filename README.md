@@ -13,6 +13,10 @@ take minutes.
 > their respective owners and are used here only to describe compatibility with the game and its file formats.
 > It does not modify the game, read its memory, or inject input; see [osu! stable](#osu-stable).
 
+> **Personal project, all rights reserved.** This is my own personal work. You may not copy, modify,
+> redistribute, or reuse any part of it, and contributions (pull requests, patches) are not accepted.
+> See [Copyright and usage](#copyright-and-usage).
+
 ## Requirements
 
 | | Minimum | Notes |
@@ -27,6 +31,141 @@ take minutes.
 
 The memory and disk figures were measured on one machine with the default settings, so treat them as a guide.
 
+## Getting started
+
+### 1. Install
+
+You need Python 3.10 or newer. On Windows, install it from [python.org](https://www.python.org/downloads/)
+and tick **Add python.exe to PATH** in the installer (Tkinter is included). Then, in a terminal in this
+folder:
+
+```powershell
+python -m venv .venv                 # create a virtual environment (once)
+.venv\Scripts\activate               # activate it (every new terminal)
+pip install -r requirements.txt      # install the dependencies (once, about 0.6 GB)
+```
+
+On macOS or Linux, activate with `source .venv/bin/activate` instead. If PowerShell refuses to run the
+activate script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use
+`.venv\Scripts\python app.py` without activating.
+
+### 2. Run the app
+
+```powershell
+python app.py
+```
+
+The app opens on the **Dashboard**. Everything below happens inside the app; you don't need the
+command-line scripts unless you want them.
+
+### 3. Your first model in five minutes
+
+The repository ships with 12 synthetic demo maps in `maps/demo`, so you can train straight away:
+
+1. Click **Create New Model** (on the Dashboard, or **Models → Create New Model** in the sidebar).
+2. Give it a **Name**. **Beatmap folder** is already set to `maps/demo`.
+3. Set **Training length** to **Short (300k)** and click **Review & Start Training**, then **Start Training**.
+4. The **Training** page shows live progress. When it finishes (a few minutes on a laptop CPU), click
+   **Test this version**.
+5. Pick a map and click **Watch Bot Play** to see it play.
+
+## User guide
+
+Step-by-step instructions for the common tasks. The sections after this one go into more detail.
+
+### Train a new model
+
+1. **Models → Create New Model**.
+2. **Model:** enter a **Name** and, optionally, a **Description**.
+3. **Training maps:** choose the **Beatmap folder** with **Browse…**, or a single `.osu` / `.osz` / `.zip`
+   with **File…** (see [Using real maps](#using-real-maps)). Optionally set a **Star range**, for example
+   1 to 2.5 stars, to train only on easier maps. **Validation maps** (default **Auto**) is how many maps are
+   held out of training to measure the model fairly.
+4. **Training:** pick a **Training length**, from **Quick test (50k)** through **Standard (1M)** to
+   **Long (3M)** or **Custom**. The other settings have sensible defaults; **Show advanced settings**
+   holds PPO settings, network size and the number of **Parallel games** (lower it if your PC runs out of
+   memory).
+5. Click **Review & Start Training**, check the summary, and click **Start Training**.
+
+### Watch and control training
+
+The **Training** page shows progress, the time left, recent accuracy and losses.
+
+- **Pause** / **Resume** pauses without losing anything.
+- **Save checkpoint now** saves an intermediate copy you can resume from later.
+- **Stop & save version** ends training early and keeps what it learned so far as a new version.
+- **Cancel (discard)** ends training and throws the session away.
+
+When it finishes, you can **Test this version**, **Generate replay**, **View version history**, or
+**Train more**. You can leave the Training page while training runs; the Dashboard shows its status.
+
+### Keep training a model
+
+1. **Models → Continue Training** (or **Continue Training From Here** on a version, or **Train more**
+   after a session).
+2. Choose where to start: **Current (active) version**, **Best version**, **Latest version**,
+   **A specific version:**, or **A checkpoint:**.
+3. Set the **Additional training** length. You can change the maps or **Star range** here, for example
+   widening the range as the bot improves.
+4. Click **Review & Continue Training**, check the summary (it warns if a changed setting could hurt),
+   and click **Start Training**. The result is always a **new** version; the one you started from is kept
+   unchanged.
+
+### Watch the bot play a map
+
+1. **Test Model → Watch Bot Play**.
+2. Choose the model and version.
+3. Choose a map: **Choose .osu…** for a single map (an `.osz` / `.zip` lets you pick a difficulty),
+   **Browse osu! Songs…** for your osu! library, or **Or browse a folder of maps** to pick from a list with
+   star ratings and filters such as **Unseen by this model**.
+4. Pick a **Speed** (0.5x to 2x) and click **Watch Bot Play**. The bot plays live in a 4K playfield and
+   shows its [rank](#ranks) at the end.
+5. Afterwards, click **Save as replay**, or **Save & watch in osu!** to open it in osu! stable.
+
+### Make a replay for osu!
+
+1. **Test Model → Generate Replay**, then choose a model, version and map as above.
+2. Optionally set **Attempts (keep best)** to keep the best of several plays, and a **Player name**.
+3. Click **Generate Replay**. When it finishes you can **Open in osu!**, **Import map into osu!** (if osu!
+   doesn't have that map yet), **Open Replay Folder** or **Copy Replay Path**.
+
+Every replay is listed under **Replays**, where you can open it again, regenerate it or delete it. See
+[Watch your model play in the real game](#watch-your-model-play-in-the-real-game) for details.
+
+### Manage models and versions
+
+**Models → Existing Models** lists your models (use **Search** and **Show archived**). Open one to see
+its tabs:
+
+- **Version History:** the lineage tree of every version. Select a version and use **Details**,
+  **Test**, **Generate Replay**, **Continue Training From Here**, **Set as Active** (the version used by
+  default), **Mark as Best**, **Protect**, **Favourite**, **Archive**, **Evaluate…** or **Delete Version**.
+- **Checkpoints:** intermediate saves. **Continue Training From Checkpoint**, or **Save as New Version**.
+- **Training Sessions:** every session with its settings and results. **Open learning curve** shows the
+  accuracy graph for one session.
+- **Storage:** what is using disk space, with buttons to delete checkpoints, training logs or evaluation
+  results. Versions are never deleted from here.
+
+The buttons above the tabs **Rename**, **Archive** or **Delete Model** (deleting a whole model asks you
+to type its name).
+
+### Measure and compare versions
+
+1. **Evaluate…** a version plays every map in a folder once at full length and records its accuracy,
+   timing, misses and more. Click **Run evaluation**.
+2. To compare two versions, click **Compare Versions** above the model's tabs, or select two versions
+   in **Version History** and click **Compare Selected**.
+3. Use **Run both on the same maps…** for a fair comparison, then read the **Table** tab, or open
+   **Charts** for learning curves and bar charts. **Full screen** gives a larger, zoomable view. See
+   [Comparing versions](#comparing-versions).
+
+### Settings
+
+**Settings** lets you see and change where your data is stored (**Change Location…** copies it safely),
+**View Storage Usage**, **Clean Temporary Files**, set your osu! stable folder (**Browse…** or
+**Detect**), change defaults, import models from the old `runs/` folder, and **Open Logs Folder** if
+something goes wrong.
+
 ## The app
 
 `python app.py` opens a desktop app (Tkinter, no extra dependencies) that covers the whole workflow:
@@ -36,7 +175,7 @@ The memory and disk figures were measured on one machine with the default settin
 | **Dashboard** | Totals, last trained / best model, training status, device and osu! status, quick actions |
 | **Models → Create New Model** | Name, maps (a folder, or a single `.osu` / `.osz` / `.zip` via **File…**; 4K maps are validated, everything else is listed and skipped), an optional **star range**, training length, learning rate, batch size, checkpoints, device, seed, advanced PPO settings, then a summary before training starts |
 | **Models → Existing Models** | Model Library: rename, archive, delete, open a model |
-| **Models → Version History** | Lineage tree of every version: test, generate a replay, continue training from it, set active, mark best, protect, favourite, archive, evaluate, compare, delete |
+| **Models → Version History** | Lineage tree of every version: test, generate a replay, continue training from it, set active, mark best, protect, favourite, archive, evaluate, compare (as a table or as [charts](#comparing-versions)), delete |
 | **Models → Continue Training** | Resume from the active, best or latest version, any older version, or a checkpoint. Weights, optimiser state, step counter and learning-rate schedule are restored. Change the maps or **star range** for the new session. Warns when a changed setting could hurt |
 | **Training** | Live progress, losses, recent accuracy, checkpoints, ETA; pause, save checkpoint now, stop & save, cancel |
 | **Test Model** | Pick model, version and a 4K map (a `.osu` file, an `.osz` / `.zip` to choose one of its difficulties, or browse a whole folder filtered by **star range**, with each map tagged trained on / held-out / new), then **Watch Bot Play** (the model plays live in a 4K playfield, then save the play and open it in osu!) or **Generate Replay** (no watching; writes an `.osr`) |
@@ -57,6 +196,32 @@ and only then are renamed into place. Version numbers are never reused.
 
 Deleting asks for confirmation (whole models also require typing the name). A version that is
 being trained from or tested is locked until that finishes.
+
+### Comparing versions
+
+In the Model Library, **Compare Versions** (or select two versions and click **Compare Selected**) opens a
+side-by-side comparison of any two versions, A and B, even from different models. Choose whether to
+compare each version's **latest evaluation** or its **validation from training**. If the two results come
+from different maps, the dialog warns you; **Run both on the same maps…** evaluates both on one set so the
+numbers are directly comparable.
+
+The **Table** tab lists every metric with the better version marked. The **Charts** tab shows:
+
+- **Learning curve:** rolling accuracy (mean of the last 50 plays) against total training timesteps, with
+  both versions overlaid. A version made with *Continue Training* includes the sessions of its parent
+  versions, so its line picks up where its parent's left off. The legend gives each curve's final accuracy.
+- **Bar charts** in three panels, one per unit so each has a single honest axis: **Accuracy (%)** (overall,
+  notes hit, holds, each lane), **Mistakes** (misses, extra presses, broken holds) and **Timing (ms)** (mean
+  offset, deviation, mean error). Each pair of bars is labelled with the better version and the margin,
+  for example "B +0.9" or "A −20".
+- **Hover** over a bar for its exact value, or over the learning curve to read both versions' accuracy at
+  that point in training.
+
+**Full screen** opens the charts in a maximised, resizable window that labels every bar with its value and
+has a toolbar to zoom into a region (useful when both curves flatten near 100%), pan, and save; **Esc**
+closes it and **F11** toggles true full screen. **Save as PNG…** exports the charts. A version imported
+from the old command line, or whose training logs were deleted (*Delete training logs*), has no learning
+curve; the bar charts still work.
 
 ### Where your data lives (not in Git)
 
@@ -113,10 +278,13 @@ running game: it only hands osu! a replay or mapset file, the same as double-cli
 | `maniabot/models.py` | Model library: versions, lineage, flags, checkpoints, sessions, safe deletion |
 | `maniabot/training.py` | Training sessions (new / continue), checkpoints, background worker process |
 | `maniabot/evaluation.py` | Inference and evaluation metrics (timing, lanes, holds, misses, extra presses) |
+| `maniabot/charts.py` | Comparison charts: learning curves across a version's lineage, metric bar charts, hover tooltips |
+| `maniabot/ranks.py` | osu!mania rank (SS / S / A / B / C / D) from accuracy and judgement counts |
 | `maniabot/replays.py` | Replay generation and history |
 | `maniabot/beatmaps.py` | osu!mania 4K validation with reasons for rejected maps; unpacks `.osz` / `.zip` map archives into a cache |
 | `maniabot/osu_integration.py` | Finds osu! stable, opens replays and mapsets |
 | `maniabot/legacy.py` | Imports models trained with the old `train.py` |
+| `maniabot/sb3_compat.py` | Loads stable-baselines3 model files reliably across torch / Python versions |
 | `maniabot/ui/` | The Tkinter interface |
 | `osu_parser.py` | Parses `.osu` files (note times, lanes, holds, OD) |
 | `mania_env.py` | Gymnasium env: 4 keys, real hit windows (MAX/300/200/100/50/miss), hold notes |
@@ -134,14 +302,10 @@ python -m pytest              # includes a real training worker process (marked 
 python -m pytest -m "not slow"
 ```
 
-## Quick start
+## Command-line scripts
 
-```bash
-pip install -r requirements.txt
-python app.py                                  # the desktop app
-```
-
-Or with the original command-line scripts:
+The app covers everything (see [Getting started](#getting-started)), but the original scripts still work
+for scripted or headless runs. They write to `runs/`, which is git-ignored:
 
 ```bash
 python make_demo_maps.py                       # writes maps/demo/*.osu
@@ -293,3 +457,17 @@ A perfect-timing bot has nothing to learn, so use the human-like knobs:
 3. Add 5K to 7K by generalising `KEYS`.
 4. Drive the real game: needs screen capture and input injection, and latency will dominate, so expect
    the simulator policy to need retraining with realistic delay and jitter.
+
+## Copyright and usage
+
+Copyright © 2026 Yameen Munir. All rights reserved.
+
+This project is my own personal work. No licence is granted to anyone. Without my prior written
+permission, you may not:
+
+- copy, modify, adapt, or create derivative works from any part of the code, assets, or documentation;
+- redistribute, publish, sublicense, or sell it, in whole or in part;
+- use it, or any part of it, in another project.
+
+Contributions are not accepted: issues, pull requests, and patches will not be reviewed or merged.
+Viewing the source here does not grant any rights to it.
