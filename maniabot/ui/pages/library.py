@@ -1,11 +1,12 @@
 """Model Library: models, version history (lineage), checkpoints, sessions, storage, compare."""
 from __future__ import annotations
 
+import logging
 import tkinter as tk
 from pathlib import Path
-from tkinter import ttk
+from tkinter import filedialog, ttk
 
-from maniabot import osu_integration
+from maniabot import charts, osu_integration
 from maniabot.beatmaps import scan_maps
 from maniabot.evaluation import POLICIES, compare, evaluate, strip_private
 from maniabot.legacy import read_sb3_data
@@ -17,6 +18,9 @@ from maniabot.ui.widgets import (
     Card, Dialog, EmptyState, KeyValueGrid, Table, ask_string, badge_row, confirm_delete, error, fmt_date,
     fmt_duration, fmt_int, fmt_pct, fmt_value, message,
 )
+
+
+log = logging.getLogger("maniabot.ui")
 
 
 class LibraryPage(Page):
@@ -844,10 +848,67 @@ class EvaluateDialog(Dialog):
 
 
 # ============================================================== compare
+class ChartWindow(tk.Toplevel):
+    """The comparison charts in a maximised, resizable window, with matplotlib's zoom / pan / save toolbar."""
+
+    def __init__(self, dialog: Dialog, fig, title: str):
+        super().__init__(dialog)
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+
+        self.dialog = dialog
+        self.title(title)
+        self.configure(bg=theme.SURFACE)
+        self.transient(dialog)
+        self.minsize(theme.px(900), theme.px(600))
+        canvas = FigureCanvasTkAgg(fig, master=self)
+        charts.attach_hover(fig)
+        bar = tk.Frame(self, bg=theme.SURFACE)
+        bar.pack(side="top", fill="x")
+        toolbar = NavigationToolbar2Tk(canvas, bar, pack_toolbar=False)
+        toolbar.configure(bg=theme.SURFACE)
+        for w in toolbar.winfo_children():
+            try:
+                w.configure(bg=theme.SURFACE)
+            except tk.TclError:
+                pass
+        toolbar.pack(side="left", padx=8, pady=4)
+        ttk.Label(bar, text="Drag with the magnifier to zoom into a region  ·  Home resets  ·  Esc closes",
+                  style="CardMuted.TLabel").pack(side="left", padx=12)
+        ttk.Button(bar, text="Close", command=self.close).pack(side="right", padx=12, pady=6)
+        widget = canvas.get_tk_widget()
+        widget.configure(bg=theme.SURFACE, highlightthickness=0)
+        widget.pack(side="top", fill="both", expand=True)
+        self.bind("<Escape>", lambda _e: self.close())
+        self.bind("<F11>", lambda _e: self.attributes("-fullscreen", not self.attributes("-fullscreen")))
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        try:
+            self.state("zoomed")  # Windows / most X11 window managers
+        except tk.TclError:
+            self.geometry(f"{self.winfo_screenwidth()}x{self.winfo_screenheight()}+0+0")
+        canvas.draw()
+        # The compare dialog is modal; take the grab while open and hand it back on close.
+        self.grab_set()
+        self.focus_set()
+
+    def close(self) -> None:
+        self.grab_release()
+        self.destroy()
+        if self.dialog.winfo_exists():
+            self.dialog.grab_set()
+            self.dialog.focus_set()
+
+
 class CompareDialog(Dialog):
+    last_tab = 0  # remembered across dialogs for the session
+    CHART_W, CHART_H = 900, 660  # 96-DPI pixels at 100 dpi = the 9.0 x 6.6 in figure; shrunk to fit
+
     def __init__(self, parent, ctx, a: tuple[str, str], b: tuple[str, str]):
         super().__init__(parent, "Compare versions", width=820)
         self.ctx = ctx
+        self._curves: dict[tuple[str, str], charts.Curve | None] = {}
+        self._fig = None
+        self._chart_canvas = None
+        self._charts_dirty = True
         ttk.Label(self.body, text="Compare versions", style="CardH2.TLabel").grid(row=0, column=0, sticky="w")
         self.options = []
         for m in ctx.store.list_models():
@@ -874,11 +935,122 @@ class CompareDialog(Dialog):
         ttk.Button(src, text="Run both on the same maps…", command=self.head_to_head).pack(side="left", padx=12)
         self.note = ttk.Label(self.body, text="", style="CardMuted.TLabel", wraplength=760, justify="left")
         self.note.grid(row=3, column=0, sticky="w", pady=(8, 0))
-        self.table = Table(self.body, [("metric", "Metric", 230), ("a", "A", 200), ("b", "B", 200), ("better", "Better", 80)],
+        self.nb = ttk.Notebook(self.body)
+        self.nb.grid(row=4, column=0, sticky="nsew", pady=(8, 0))
+        table_tab = ttk.Frame(self.nb, style="Card.TFrame")
+        table_tab.columnconfigure(0, weight=1)
+        self.table = Table(table_tab, [("metric", "Metric", 230), ("a", "A", 200), ("b", "B", 200), ("better", "Better", 80)],
                            height=20)
-        self.table.grid(row=4, column=0, sticky="nsew", pady=(8, 0))
+        self.table.grid(row=0, column=0, sticky="nsew", pady=(8, 0))
+        self.nb.add(table_tab, text="Table")
+        self._build_charts_tab()
+        self.nb.select(self.last_tab)
+        self.nb.bind("<<NotebookTabChanged>>", lambda _e: self._tab_changed())
         self.buttons([("Close", None, "Accent.TButton")])
         self.render()
+
+    # ------------------------------------------------------------ charts
+    def _build_charts_tab(self) -> None:
+        tab = ttk.Frame(self.nb, style="Card.TFrame")
+        tab.columnconfigure(0, weight=1)
+        bar = ttk.Frame(tab, style="Card.TFrame")
+        bar.grid(row=0, column=0, sticky="ew", pady=(8, 4))
+        ttk.Label(bar, text="Learning curves include every training session in each version's lineage.",
+                  style="CardMuted.TLabel").pack(side="left")
+        self.save_btn = ttk.Button(bar, text="Save as PNG…", command=self._save_png)
+        self.save_btn.pack(side="right")
+        self.full_btn = ttk.Button(bar, text="Full screen", command=self._full_screen)
+        self.full_btn.pack(side="right", padx=(0, 8))
+        # Fit the screen: the dialog is not resizable; the rest of it needs ~460 px (title bar and taskbar included).
+        fit = min(1.0, (self.winfo_screenheight() - theme.px(460)) / theme.px(self.CHART_H),
+                  (self.winfo_screenwidth() - theme.px(100)) / theme.px(self.CHART_W))
+        fit = max(fit, 0.5)
+        self.chart_w, self.chart_h = round(theme.px(self.CHART_W) * fit), round(theme.px(self.CHART_H) * fit)
+        self.chart_host = tk.Frame(tab, bg=theme.SURFACE, width=self.chart_w, height=self.chart_h)
+        self.chart_host.grid(row=1, column=0, sticky="nsew")
+        self.chart_host.grid_propagate(False)
+        self.chart_host.pack_propagate(False)
+        self.nb.add(tab, text="Charts")
+
+    def _charts_visible(self) -> bool:
+        return self.nb.index("current") == 1
+
+    def _tab_changed(self) -> None:
+        CompareDialog.last_tab = self.nb.index("current")
+        if self._charts_visible() and self._charts_dirty:
+            self._draw_charts()
+
+    def _curve(self, mid: str, ver: str) -> charts.Curve | None:
+        if (mid, ver) not in self._curves:
+            try:
+                self._curves[(mid, ver)] = charts.version_curve(self.ctx.store, mid, ver)
+            except Exception:  # noqa: BLE001 - a broken log must not break the dialog
+                log.exception("learning curve for %s %s", mid, ver)
+                self._curves[(mid, ver)] = None
+        return self._curves[(mid, ver)]
+
+    def _series_label(self, side: str, mid: str, ver: str) -> str:
+        name = self.ctx.store.get_model(mid).name
+        name = name if len(name) <= 24 else name[:23] + "…"
+        return f"{side}: {name} · {ver}"
+
+    def _figure(self, **kw):
+        (ma, va), (mb, vb) = self._pick(self.a), self._pick(self.b)
+        labels = (self._series_label("A", ma, va), self._series_label("B", mb, vb))
+        return charts.comparison_figure(self._cmp, (self._curve(ma, va), self._curve(mb, vb)), labels, **kw)
+
+    def _chart_message(self, text: str, style: str = "CardMuted.TLabel") -> None:
+        ttk.Label(self.chart_host, text=text, style=style).pack(expand=True)
+        for b in (self.save_btn, self.full_btn):
+            b.state(["disabled"])
+
+    def _draw_charts(self) -> None:
+        for w in self.chart_host.winfo_children():
+            w.destroy()
+        self._fig = self._chart_canvas = None
+        try:
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        except ImportError:
+            self._chart_message("Charts need matplotlib (pip install matplotlib).")
+            return
+        try:
+            self._fig = self._figure(dpi=self.chart_w / 9.0)
+        except Exception:  # noqa: BLE001
+            log.exception("drawing comparison charts")
+            self._chart_message("Could not draw the charts (details are in the log file).", "CardError.TLabel")
+            return
+        self._chart_canvas = FigureCanvasTkAgg(self._fig, master=self.chart_host)
+        charts.attach_hover(self._fig)
+        self._chart_canvas.draw()
+        self._chart_canvas.get_tk_widget().configure(bg=theme.SURFACE, highlightthickness=0)
+        self._chart_canvas.get_tk_widget().pack(fill="both", expand=True)
+        for b in (self.save_btn, self.full_btn):
+            b.state(["!disabled"])
+        self._charts_dirty = False
+
+    def _full_screen(self) -> None:
+        try:
+            fig = self._figure(detail=True, dpi=125 * theme.SCALE)
+        except Exception:  # noqa: BLE001
+            log.exception("drawing full-screen charts")
+            error(self, "Could not draw the charts (details are in the log file).")
+            return
+        (ma, va), (mb, vb) = self._pick(self.a), self._pick(self.b)
+        ChartWindow(self, fig, f"Compare  ·  {ma} {va}  vs  {mb} {vb}")
+
+    def _save_png(self) -> None:
+        if self._fig is None:
+            return
+        (ma, va), (mb, vb) = self._pick(self.a), self._pick(self.b)
+        path = filedialog.asksaveasfilename(parent=self, title="Save comparison charts", defaultextension=".png",
+                                            filetypes=[("PNG image", "*.png")],
+                                            initialfile=f"compare_{ma}_{va}_vs_{mb}_{vb}.png")
+        if not path:
+            return
+        try:
+            charts.save_png(self._fig, Path(path))
+        except OSError as exc:
+            error(self, f"Could not save the image: {exc}")
 
     def _pick(self, var) -> tuple[str, str]:
         label = var.get()
@@ -908,7 +1080,10 @@ class CompareDialog(Dialog):
             note += "\n⚠ The two results come from different maps, so they are not directly comparable. Use “Run both on the same maps”."
         self.note.configure(text=note)
         self.table.clear()
-        cmp = compare(ea, eb)
+        cmp = self._cmp = compare(ea, eb)
+        self._charts_dirty = True
+        if self._charts_visible():
+            self._draw_charts()
         for i, r in enumerate(cmp.rows):
             better = {"a": "A", "b": "B"}.get(r["winner"], "")
             self.table.insert(f"m{i}", [r["label"], fmt_value(r["key"], r["a"]), fmt_value(r["key"], r["b"]), better],
