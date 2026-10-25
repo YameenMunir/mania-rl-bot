@@ -180,7 +180,7 @@ something goes wrong.
 | **Models → Existing Models** | Model Library: rename, archive, delete, open a model |
 | **Models → Version History** | Lineage tree of every version: test, generate a replay, continue training from it, set active, mark best, protect, favourite, archive, evaluate, compare (as a table or as [charts](#comparing-versions)), delete |
 | **Models → Continue Training** | Resume from the active, best or latest version, any older version, or a checkpoint. Weights, optimiser state, step counter and learning-rate schedule are restored. Change the maps or **star range** for the new session. Warns when a changed setting could hurt |
-| **Training** | Live progress, losses, recent accuracy, checkpoints, ETA; pause, save checkpoint now, stop & save, cancel |
+| **Training** | Live progress, losses, recent accuracy, checkpoints, ETA; **watch the bot play at any checkpoint**; pause, save checkpoint now, stop & save, cancel |
 | **Test Model** | Pick model, version and a 4K map (a `.osu` file, an `.osz` / `.zip` to choose one of its difficulties, or browse a whole folder filtered by **star range**, with each map tagged trained on / held-out / new), then **Watch Bot Play** (the model plays live in a 4K playfield, then save the play and open it in osu!) or **Generate Replay** (no watching; writes an `.osr`) |
 | **Replays** | Replay history with accuracy and rank; open in osu!, show in folder, copy path, generate again, delete. Entries survive deleting the model |
 | **Settings** | Storage location (change it with a safe copy), storage usage, osu! stable folder, defaults, import old CLI runs, logs |
@@ -398,6 +398,16 @@ They combine as in osu! (for example **DTHR**), except EZ with HR and DT with HT
 The bot's inputs don't include the mods. It sees how soon each note arrives in real time, so DT just looks
 like a denser map, and it learns to time well enough for the tightest windows it trains with. That also
 means older models load and play with mods without retraining.
+
+### Watching a model while it trains
+
+Training itself is not drawn on screen (it runs several games in parallel in the background, with random
+exploration). To see how the bot is playing right now, open the **Training** page, select a checkpoint in
+the table (or leave none selected for the newest one) and click **Watch bot at this checkpoint…**. Pick a
+map from the browser, which starts on your training folder and star range, and a Watch window plays that
+checkpoint in real time, without exploration noise. Training keeps running, a little slower while you
+watch. A checkpoint preview can't be saved as a replay; promote the checkpoint to a version first (Version
+History → Checkpoints) if you want a replay.
 
 ### Ranks
 

@@ -37,9 +37,16 @@ class WatchWindow(tk.Toplevel):
     HIT_Y_FROM_BOTTOM = 110
     SCROLL = 0.9  # px per ms
 
-    def __init__(self, parent, ctx, model_id: str, version: str, check, speed: float = 1.0, mods: int = 0):
+    def __init__(self, parent, ctx, model_id: str, version: str, check, speed: float = 1.0, mods: int = 0,
+                 weights: str | None = None, env_config: dict | None = None):
+        """`weights` (a checkpoint .zip) plays a snapshot of a training run instead of a saved version.
+
+        A checkpoint preview isn't tied to a version, so it can't be saved as a replay.
+        """
         super().__init__(parent)
         self.ctx, self.model_id, self.version, self.check = ctx, model_id, version, check
+        self._weights, self._env_config = weights, env_config
+        self.preview = weights is not None
         self.bm = check.beatmap
         self.speed = speed
         self.mods = mods
@@ -80,7 +87,7 @@ class WatchWindow(tk.Toplevel):
         self.stopped_early = False
         self.rank: str | None = None  # set when a full play finishes
         self.saved: dict | None = None
-        self.token = IN_USE.acquire(model_id, version, "watching a live test")
+        self.token = None if self.preview else IN_USE.acquire(model_id, version, "watching a live test")
         self.last_counts = None
         self.flash: tuple[int, float] | None = None
         self.after(50, self._load)
@@ -93,13 +100,20 @@ class WatchWindow(tk.Toplevel):
             text = "osu! stable not found (replay will still be saved)"
         else:
             text = "osu! stable is running" if o["running"] else "osu! stable installed (not running)"
+        if self.preview:
+            text = "Checkpoint preview: not saved as a replay"
         self.osu_lbl.configure(text=text)
 
     def _load(self) -> None:
         def work():
-            v = self.ctx.store.get_version(self.model_id, self.version)
-            model = POLICIES.load(v.weights)
-            env = make_play_env(self.bm, v.meta.get("env_config"), record=True, mods=self.mods)
+            if self._weights:
+                model = POLICIES.load(self._weights)
+                env_cfg = self._env_config
+            else:
+                v = self.ctx.store.get_version(self.model_id, self.version)
+                model = POLICIES.load(v.weights)
+                env_cfg = v.meta.get("env_config")
+            env = make_play_env(self.bm, env_cfg, record=True, mods=self.mods)
             check_compatible(model, env)
             return model, env
 
@@ -225,8 +239,9 @@ class WatchWindow(tk.Toplevel):
         self.running = False
         self.finished = True
         self.btn_stop.pack_forget()
-        self.btn_save.pack(side="left")
-        self.btn_osu.pack(side="left", padx=6)
+        if not self.preview:
+            self.btn_save.pack(side="left")
+            self.btn_osu.pack(side="left", padx=6)
         acc = self.info.get("accuracy")
         counts = self.info.get("counts")
         self.rank = None if self.stopped_early else mania_rank(acc, counts)

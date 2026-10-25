@@ -4,10 +4,14 @@ from __future__ import annotations
 from pathlib import Path
 from tkinter import ttk
 
+from maniabot.beatmaps import check_beatmap
 from maniabot.ui import theme
 from maniabot.ui.pages.base import Page
+from maniabot.ui.pages.map_browser import MapBrowser
+from maniabot.ui.pages.watch import WatchWindow
 from maniabot.ui.widgets import (
-    Card, EmptyState, KeyValueGrid, LineChart, Table, ask, badge, fmt_date, fmt_duration, fmt_int, fmt_pct,
+    Card, Dialog, EmptyState, KeyValueGrid, LineChart, Table, ask, badge, error, fmt_date, fmt_duration, fmt_int,
+    fmt_pct,
 )
 
 
@@ -95,6 +99,13 @@ class TrainingPage(Page):
                                                   ("val", "Validation", 100), ("when", "Saved", 160), ("note", "", 100)],
                               height=4)
         self.ck_table.grid(row=0, column=0, sticky="ew")
+        row = ttk.Frame(self.ck_card.body, style="Card.TFrame")
+        row.grid(row=1, column=0, sticky="w", pady=(10, 0))
+        self.watch_btn = ttk.Button(row, text="Watch bot at this checkpoint…", command=self._watch_checkpoint)
+        self.watch_btn.pack(side="left")
+        ttk.Label(row, text="Plays the selected checkpoint (or the newest one) on a map you choose, in a separate "
+                            "window. Training keeps running, a little slower while you watch.",
+                  style="CardMuted.TLabel", wraplength=560, justify="left").pack(side="left", padx=(12, 0))
 
         self.hist = Card(self.body, "Recent training sessions")
         self.hist_table = Table(self.hist.body, [
@@ -149,6 +160,48 @@ class TrainingPage(Page):
             self._render_history()
         if self.visible():
             self._render()
+
+    def _watch_checkpoint(self) -> None:
+        job = self.ctx.job
+        if job is None or not job.checkpoints:
+            error(self, "No checkpoint has been saved yet. The first one appears after the first checkpoint "
+                        "interval (see 'Checkpoint every' in the training settings).", "Nothing to watch yet")
+            return
+        sel = self.ck_table.selected()
+        ckpt = next((c for c in job.checkpoints if c["path"] == sel), job.checkpoints[-1])
+        if not Path(ckpt["path"]).exists():
+            error(self, f"{Path(ckpt['path']).name} is no longer on disk.", "Checkpoint missing")
+            return
+        spec = job.spec
+        d = Dialog(self, "Choose a map to watch", width=960)
+        ttk.Label(d.body, text=f"Checkpoint {Path(ckpt['path']).name}  ·  {fmt_int(ckpt['timesteps'])} steps  ·  "
+                               f"validation {fmt_pct(ckpt.get('val_accuracy'))}", style="CardH2.TLabel").grid(
+            row=0, column=0, sticky="w")
+        chosen: dict = {}
+
+        def pick(path: str) -> None:
+            chosen["path"] = path
+
+        sess = next((x for x in self.ctx.store.list_sessions(spec.model_id) if x.get("session_id") == spec.session_id), {})
+        meta = {"training_maps": sess.get("training_maps"), "validation_maps": sess.get("validation_maps"),
+                "validation": {"heldout": bool(sess.get("validation_heldout"))}}
+        browser = MapBrowser(d.body, self.ctx, on_pick=pick, folder=spec.maps_folder,
+                             star_range=(spec.min_stars, spec.max_stars))
+        browser.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
+        browser.set_context(meta, [])
+        browser.ensure_scanned()
+        d.buttons([("Cancel", None, "TButton"), ("Watch", "watch", "Accent.TButton")])
+        if d.show() != "watch":
+            return
+        if not chosen.get("path"):
+            error(self, "Click a map in the list first.", "No map chosen")
+            return
+        check = check_beatmap(chosen["path"])
+        if not check.ok:
+            error(self, check.reason, "Can't use this map")
+            return
+        WatchWindow(self, self.ctx, spec.model_id, f"checkpoint {fmt_int(ckpt['timesteps'])} steps", check, 1.0,
+                    weights=ckpt["path"], env_config=spec.env_config)
 
     def _add_ckpt(self, c) -> None:
         if self.ck_table.tv.exists(c["path"]):
